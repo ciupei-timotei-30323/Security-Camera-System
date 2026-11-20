@@ -39,13 +39,16 @@ namespace Security_Camera_Backend.Migrations
                     b.Property<string>("FullImageUri")
                         .HasColumnType("text");
 
-                    b.Property<bool>("IsImageSynced")
+                    b.Property<bool>("IsEmailSent")
                         .HasColumnType("boolean");
 
-                    b.Property<bool?>("IsSuspect")
+                    b.Property<bool>("IsOfflineSync")
                         .HasColumnType("boolean");
 
-                    b.Property<DateTime>("Timestamp")
+                    b.Property<bool>("IsSuspect")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
