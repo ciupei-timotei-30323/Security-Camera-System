@@ -3,3 +3,5 @@
 /Security-Camera-Backend/.idea/
 /Security-Camera-Backend/.env
 /Security-Camera-Backend/data/
+/tests/**/bin/
+/tests/**/obj/

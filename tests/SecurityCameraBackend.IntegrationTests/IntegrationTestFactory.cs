@@ -1,0 +1,132 @@
+using System.Net;
+using System.Text;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Testcontainers.PostgreSql;
+using Xunit;
+
+namespace SecurityCameraBackend.IntegrationTests;
+
+/// <summary>
+/// Shares one PostgreSQL container, one application host and one captures directory across
+/// every test class in the "Integration" collection.
+/// </summary>
+public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAsyncLifetime
+{
+    public const string AdminDeviceCode = "TEST-CAM-1234";
+    public const string JwtSecret = "super-secret-integration-test-key-at-least-32-chars";
+    public const string PiApiKey = "test-pi-api-key-12345";
+
+#pragma warning disable CS0618 // Testcontainers deprecated the parameterless builder ctor; the requested form is kept.
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
+        .WithImage("postgres:16-alpine")
+        .Build();
+#pragma warning restore CS0618
+
+    private readonly Dictionary<string, string?> _previousEnvironment = new(StringComparer.Ordinal);
+
+    public string CapturesDirectory { get; } =
+        Path.Combine(Path.GetTempPath(), $"security-camera-captures-{Guid.NewGuid():N}");
+
+    // Program reads DB_URL while registering services, i.e. before WebApplicationFactory can
+    // apply ConfigureAppConfiguration callbacks. Process environment variables are therefore the
+    // only override that is guaranteed to be visible to that code.
+    private IReadOnlyDictionary<string, string> TestEnvironment => new Dictionary<string, string>
+    {
+        ["DB_URL"] = _postgres.GetConnectionString(),
+        ["Admin__DeviceCode"] = AdminDeviceCode,
+        ["Jwt__Secret"] = JwtSecret,
+        ["PiAuth__ApiKey"] = PiApiKey,
+        ["Storage__CapturesDirectory"] = CapturesDirectory,
+        ["CvService__BaseUrl"] = "http://cv-service",
+        ["ASPNETCORE_ENVIRONMENT"] = "Testing"
+    };
+
+    public async Task InitializeAsync()
+    {
+        await _postgres.StartAsync();
+
+        Directory.CreateDirectory(CapturesDirectory);
+
+        foreach (var (key, value) in TestEnvironment)
+        {
+            _previousEnvironment[key] = Environment.GetEnvironmentVariable(key);
+            Environment.SetEnvironmentVariable(key, value);
+        }
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.ConfigureTestServices(services =>
+        {
+            // CvServiceClient is a typed HttpClient without a primary handler configured by the
+            // application, so the default handler replaces the real cv-service call.
+            services.ConfigureHttpClientDefaults(httpClient =>
+                httpClient.ConfigurePrimaryHttpMessageHandler(() => new StubCvServiceHandler()));
+        });
+    }
+
+    async Task IAsyncLifetime.DisposeAsync()
+    {
+        // Shut the host down before the database and the captures volume disappear.
+        await base.DisposeAsync();
+
+        await _postgres.DisposeAsync();
+
+        foreach (var (key, value) in _previousEnvironment)
+        {
+            Environment.SetEnvironmentVariable(key, value);
+        }
+
+        try
+        {
+            if (Directory.Exists(CapturesDirectory))
+            {
+                Directory.Delete(CapturesDirectory, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // A leaked handle must not fail the test run; the temp directory is best-effort cleanup.
+        }
+    }
+
+    /// <summary>Deterministic stand-in for the Python cv-service's <c>POST /analyze</c>.</summary>
+    private sealed class StubCvServiceHandler : HttpMessageHandler
+    {
+        private const string AnalysisJson = """
+            {
+              "person_detected": true,
+              "face_detected": true,
+              "confidence": 0.95,
+              "person_confidence": 0.95,
+              "face_confidence": 0.91,
+              "face_crop_path": null,
+              "annotated_path": null
+            }
+            """;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Post || request.RequestUri?.AbsolutePath != "/analyze")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(AnalysisJson, Encoding.UTF8, "application/json")
+            });
+        }
+    }
+}
+
+[CollectionDefinition(Name)]
+public sealed class IntegrationCollection : ICollectionFixture<IntegrationTestFactory>
+{
+    public const string Name = "Integration";
+}
