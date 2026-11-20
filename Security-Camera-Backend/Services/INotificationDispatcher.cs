@@ -8,5 +8,5 @@ namespace Security_Camera_Backend.Services;
 /// </summary>
 public interface INotificationDispatcher
 {
-    Task DispatchAsync(DetectionEvent detectionEvent, CancellationToken ct = default);
+    Task DispatchSuspectAlertAsync(DetectionEvent detectionEvent, CancellationToken ct = default);
 }
