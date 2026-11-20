@@ -39,3 +39,12 @@ Content-Type: image/jpeg
 
 < ./frame.jpg
 ------boundary--
+
+### Admin login (initial password = physical device code / Admin__DeviceCode)
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "CAM-0000-DEV1"
+}
