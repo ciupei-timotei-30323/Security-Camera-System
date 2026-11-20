@@ -1,0 +1,7 @@
+﻿services:
+  security-camera-backend:
+    image: security-camera-backend
+    build:
+      context: .
+      dockerfile: Dockerfile
+
