@@ -18,6 +18,9 @@ ARG BUILD_CONFIGURATION=Release
 RUN dotnet publish "./Security-Camera-Backend.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
+USER root
+RUN mkdir -p /data/captures && chown -R $APP_UID:$APP_UID /data/captures
+USER $APP_UID
 WORKDIR /app
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "Security-Camera-Backend.dll"]

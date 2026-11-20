@@ -1,6 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Options;
+using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Exceptions;
+using Security_Camera_Backend.Filters;
 using Security_Camera_Backend.Models;
+using Security_Camera_Backend.Services;
+using Security_Camera_Backend.Services.Cv;
 using Serilog.Configuration;
 using Serilog;
 
@@ -10,7 +16,8 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     
-    DotNetEnv.Env.TraversePath().Load();
+    // Real environment variables (Docker/systemd) win over a local .env file.
+    DotNetEnv.Env.NoClobber().TraversePath().Load();
     var builder = WebApplication.CreateBuilder(args);
 
     builder.Host.UseSerilog((context, services, configuration) => configuration
@@ -47,11 +54,37 @@ try
     builder.Services.AddProblemDetails();
     builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
     
-    
+    // Strongly-typed configuration
+    builder.Services.Configure<PiAuthOptions>(builder.Configuration.GetSection(PiAuthOptions.SectionName));
+    builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.SectionName));
+    builder.Services.Configure<CvServiceOptions>(builder.Configuration.GetSection(CvServiceOptions.SectionName));
+
+    // Motion ingestion pipeline
+    builder.Services.AddScoped<PiApiKeyAuthFilter>();
+    builder.Services.AddScoped<IEventIngestionService, EventIngestionService>();
+    builder.Services.AddSingleton<ISystemStateService, SystemStateService>();
+    builder.Services.AddSingleton<INotificationDispatcher, NoOpNotificationDispatcher>();
+
+    builder.Services.AddHttpClient<ICvServiceClient, CvServiceClient>((serviceProvider, client) =>
+    {
+        var cvOptions = serviceProvider.GetRequiredService<IOptions<CvServiceOptions>>().Value;
+
+        client.BaseAddress = new Uri(cvOptions.BaseUrl, UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(cvOptions.TimeoutSeconds);
+    });
+
     builder.Services.AddControllers();
     
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
     builder.Services.AddOpenApi();
+
+    // Captures live on a shared Docker volume, never in PostgreSQL.
+    var storageOptions = builder.Configuration
+        .GetSection(StorageOptions.SectionName)
+        .Get<StorageOptions>() ?? new StorageOptions();
+    var capturesDirectory = storageOptions.GetCapturesDirectoryFullPath();
+    Directory.CreateDirectory(capturesDirectory);
+    Log.Information("Captures directory ready at {CapturesDirectory}", capturesDirectory);
 
     var app = builder.Build();
     app.UseSerilogRequestLogging();
@@ -64,6 +97,13 @@ try
     }
 
     app.UseHttpsRedirection();
+
+    // Serve saved JPEGs at /captures so the frontend can link directly to them.
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(capturesDirectory),
+        RequestPath = storageOptions.GetPublicRequestPath()
+    });
 
     app.UseAuthorization();
 
