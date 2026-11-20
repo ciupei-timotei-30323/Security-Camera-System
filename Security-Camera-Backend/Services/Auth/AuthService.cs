@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Security_Camera_Backend.Contracts;
@@ -10,6 +13,7 @@ public sealed class AuthService(
     SecurityCameraBackendContext dbContext,
     IPasswordHasher<User> passwordHasher,
     IJwtTokenService jwtTokenService,
+    ITokenRevocationService tokenRevocationService,
     ILogger<AuthService> logger) : IAuthService
 {
     private const string InvalidCredentialsMessage = "Invalid username or password.";
@@ -64,5 +68,66 @@ public sealed class AuthService(
             token.Token,
             token.ExpiresAtUtc,
             new LoginUserResponse(user.Id, user.Username, user.Role));
+    }
+
+    public async Task LogoutAsync(ClaimsPrincipal principal, CancellationToken ct)
+    {
+        var jti = principal.FindFirstValue(JwtRegisteredClaimNames.Jti);
+
+        if (string.IsNullOrWhiteSpace(jti))
+        {
+            throw new ValidationAppException(
+                "Token is missing the 'jti' claim.",
+                "Logout request with a token that has no jti claim.");
+        }
+
+        var expirationClaim = principal.FindFirstValue(JwtRegisteredClaimNames.Exp);
+
+        if (!long.TryParse(expirationClaim, NumberStyles.Integer, CultureInfo.InvariantCulture, out var expiresAtUnix))
+        {
+            throw new ValidationAppException(
+                "Token is missing a valid 'exp' claim.",
+                $"Logout request with an unusable exp claim ('{expirationClaim}') for token {jti}.");
+        }
+
+        var expiresAtUtc = DateTimeOffset.FromUnixTimeSeconds(expiresAtUnix).UtcDateTime;
+
+        await tokenRevocationService.RevokeAsync(jti, expiresAtUtc, ct);
+    }
+
+    public async Task<UserProfileResponse> GetCurrentUserAsync(ClaimsPrincipal principal, CancellationToken ct)
+    {
+        var userId = GetUserId(principal);
+
+        if (userId is null)
+        {
+            throw new UnauthorizedAppException(
+                "Token does not identify a user.",
+                "Authenticated principal without a parseable NameIdentifier/Sub claim.");
+        }
+
+        var user = await dbContext.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(u => u.Id == userId.Value, ct);
+
+        if (user is null)
+        {
+            logger.LogWarning("Rejected profile request for deleted user {UserId}.", userId.Value);
+            throw new UnauthorizedAppException(
+                "User account no longer exists.",
+                $"Authenticated token references missing user {userId.Value}.");
+        }
+
+        return new UserProfileResponse(user.Id, user.Username, user.Role, user.CreatedAtUtc);
+    }
+
+    private static int? GetUserId(ClaimsPrincipal principal)
+    {
+        var rawUserId = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+                        ?? principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
+
+        return int.TryParse(rawUserId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId)
+            ? userId
+            : null;
     }
 }
