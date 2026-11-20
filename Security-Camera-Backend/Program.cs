@@ -214,3 +214,6 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+/// <summary>Exposed so integration tests can use <c>WebApplicationFactory&lt;Program&gt;</c>.</summary>
+public partial class Program { }

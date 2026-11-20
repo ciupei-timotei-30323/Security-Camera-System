@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="Security-Camera-Backend/Security-Camera-Backend.csproj" />
+  <Project Path="tests/SecurityCameraBackend.IntegrationTests/SecurityCameraBackend.IntegrationTests.csproj" />
+</Solution>
