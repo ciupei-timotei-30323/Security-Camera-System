@@ -11,6 +11,8 @@
       Storage__PublicRequestPath: /captures
       CvService__BaseUrl: http://cv-service:8000
       CvService__TimeoutSeconds: 10
+      Admin__DeviceCode: ${Admin__DeviceCode}
+      Jwt__Secret: ${Jwt__Secret}
     ports:
       - "8080:8080"
     volumes:
@@ -32,7 +34,7 @@
       - captures:/data/captures
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
+      interval: 100s
       timeout: 5s
       retries: 5
       start_period: 15s

@@ -1,4 +1,4 @@
-@Security_Camera_Backend_HostAddress = http://localhost:5025
+@Security_Camera_Backend_HostAddress = http://localhost:8080
 @ApiKey = dev-only-api-key
 
 ### Pi motion ingestion (multipart burst upload)
@@ -39,3 +39,12 @@ Content-Type: image/jpeg
 
 < ./frame.jpg
 ------boundary--
+
+### Admin login (initial password = physical device code / Admin__DeviceCode)
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admi",
+  "password": "CAM-0000-DEV1"
+}
