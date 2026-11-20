@@ -12,7 +12,7 @@ public sealed class CvAnalysisResult
     public bool FaceDetected { get; init; }
 
     [JsonPropertyName("confidence")]
-    public float Confidence { get; init; }
+    public float? Confidence { get; init; }
 
     /// <summary>Local path on the shared volume written by <c>cv-service</c>, e.g. <c>/data/captures/face_123.jpg</c>.</summary>
     [JsonPropertyName("face_crop_path")]

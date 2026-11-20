@@ -1,6 +1,41 @@
 @Security_Camera_Backend_HostAddress = http://localhost:5025
+@ApiKey = dev-only-api-key
 
-GET {{Security_Camera_Backend_HostAddress}}/weatherforecast/
-Accept: application/json
+### Pi motion ingestion (multipart burst upload)
+POST {{Security_Camera_Backend_HostAddress}}/api/events
+X-Api-Key: {{ApiKey}}
+Content-Type: multipart/form-data; boundary=----boundary
 
-###
+------boundary
+Content-Disposition: form-data; name="image"; filename="frame.jpg"
+Content-Type: image/jpeg
+
+< ./frame.jpg
+------boundary
+Content-Disposition: form-data; name="isOfflineSync"
+
+false
+------boundary--
+
+### Analyze a file that already exists on the captures volume (JSON)
+POST {{Security_Camera_Backend_HostAddress}}/api/events/analyze
+X-Api-Key: {{ApiKey}}
+Content-Type: application/json
+
+{
+  "imagePath": "/data/captures/test.jpg",
+  "capturedAt": null,
+  "isOfflineSync": false
+}
+
+### Analyze an uploaded frame (multipart)
+POST {{Security_Camera_Backend_HostAddress}}/api/events/analyze
+X-Api-Key: {{ApiKey}}
+Content-Type: multipart/form-data; boundary=----boundary
+
+------boundary
+Content-Disposition: form-data; name="image"; filename="frame.jpg"
+Content-Type: image/jpeg
+
+< ./frame.jpg
+------boundary--

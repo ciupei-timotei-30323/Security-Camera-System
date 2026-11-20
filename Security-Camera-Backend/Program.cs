@@ -61,6 +61,8 @@ try
 
     // Motion ingestion pipeline
     builder.Services.AddScoped<PiApiKeyAuthFilter>();
+    builder.Services.AddSingleton<ICaptureStorage, CaptureStorage>();
+    builder.Services.AddScoped<IDetectionProcessingService, DetectionProcessingService>();
     builder.Services.AddScoped<IEventIngestionService, EventIngestionService>();
     builder.Services.AddSingleton<ISystemStateService, SystemStateService>();
     builder.Services.AddSingleton<INotificationDispatcher, NoOpNotificationDispatcher>();
@@ -70,7 +72,7 @@ try
         var cvOptions = serviceProvider.GetRequiredService<IOptions<CvServiceOptions>>().Value;
 
         client.BaseAddress = new Uri(cvOptions.BaseUrl, UriKind.Absolute);
-        client.Timeout = TimeSpan.FromSeconds(cvOptions.TimeoutSeconds);
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, cvOptions.TimeoutSeconds));
     });
 
     builder.Services.AddControllers();
