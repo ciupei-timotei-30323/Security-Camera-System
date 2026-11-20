@@ -11,9 +11,32 @@
       Storage__PublicRequestPath: /captures
       CvService__BaseUrl: http://cv-service:8000
       CvService__TimeoutSeconds: 10
+    ports:
+      - "8080:8080"
     volumes:
       # Shared with cv-service: raw frames in, face crops out. Never stored in PostgreSQL.
       - captures:/data/captures
+    depends_on:
+      cv-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+
+  cv-service:
+    image: security-camera-cv-service
+    build:
+      context: ./cv-service
+      dockerfile: Dockerfile
+    volumes:
+      # Must match the exact mount path (/data/captures) used by the backend
+      - captures:/data/captures
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
 
 volumes:
   captures:
