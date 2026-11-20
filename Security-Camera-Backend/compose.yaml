@@ -11,6 +11,8 @@
       Storage__PublicRequestPath: /captures
       CvService__BaseUrl: http://cv-service:8000
       CvService__TimeoutSeconds: 10
+      Admin__DeviceCode: ${Admin__DeviceCode}
+      Jwt__Secret: ${Jwt__Secret}
     ports:
       - "8080:8080"
     volumes:
