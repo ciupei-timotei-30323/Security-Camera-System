@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Security_Camera_Backend.Exceptions;
 using Security_Camera_Backend.Models;
 using Serilog.Configuration;
 using Serilog;
@@ -14,7 +15,7 @@ try
 
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
-        .ReadFrom.Services(services),true); // True otherwise Logger freezes in Testing (idk why)
+        .ReadFrom.Services(services),true); 
 
     
     Log.Information("Connecting to the DB...");
@@ -42,6 +43,11 @@ try
 
     Log.Information("DB connection established");
     
+    // Adding ProblemDetails and GlobalExceptionHandler
+    builder.Services.AddProblemDetails();
+    builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+    
+    
     builder.Services.AddControllers();
     
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
@@ -50,7 +56,7 @@ try
     var app = builder.Build();
     app.UseSerilogRequestLogging();
 
-    
+    app.UseExceptionHandler();
 // Configure the HTTP request pipeline.
     if (app.Environment.IsDevelopment())
     {
