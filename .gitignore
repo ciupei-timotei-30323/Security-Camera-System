@@ -3,5 +3,11 @@
 /Security-Camera-Backend/.idea/
 /Security-Camera-Backend/.env
 /Security-Camera-Backend/data/
+/Security-Camera-Pi/.env
+/Security-Camera-Pi/.venv/
+/Security-Camera-Pi/offline_queue/
+/Security-Camera-Pi/**/__pycache__/
+/Security-Camera-Pi/*.egg-info/
+/Security-Camera-Pi/.pytest_cache/
 /tests/**/bin/
 /tests/**/obj/

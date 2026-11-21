@@ -4,6 +4,17 @@ ASP.NET Core backend for the Raspberry Pi security camera. The API is multi-tena
 sub-user, entrance log, away-mode setting and Pi API key belongs to exactly one camera system
 (`SystemId`, for example `sys-001` or `sys-002`).
 
+## Raspberry Pi capture daemon
+
+The Raspberry Pi 5 daemon lives in [`Security-Camera-Pi/`](Security-Camera-Pi/README.md). It runs
+Picamera2 motion detection locally, uploads full-resolution stills to `POST /api/events`, and
+pushes a ~640x360 live preview to `POST /api/camera/frame`. Events that cannot reach the backend
+are kept in a durable `offline_queue/` and retried oldest-first with exponential backoff; the
+queue is bounded by `QUEUE_MAX_MB`. It never listens for inbound connections.
+
+See the daemon README for installation, `.env` settings, the systemd unit and the offline
+queue/rejected-file behaviour.
+
 ## Multi-tenancy
 
 - **Factory administrators** are validated by an external IAM service (or the local stub in

@@ -1,0 +1,28 @@
+[Unit]
+Description=Security Camera Raspberry Pi capture daemon
+Documentation=file:/opt/security-camera-pi/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+SupplementaryGroups=video
+WorkingDirectory=/opt/security-camera-pi
+EnvironmentFile=/etc/security-camera-pi.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/security-camera-pi/.venv/bin/python -m security_camera_pi
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# Modest hardening; the camera still needs /dev/video* and the queue needs write access.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
