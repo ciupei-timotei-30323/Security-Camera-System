@@ -4,6 +4,25 @@ ASP.NET Core backend for the Raspberry Pi security camera. The API is multi-tena
 sub-user, entrance log, away-mode setting and Pi API key belongs to exactly one camera system
 (`SystemId`, for example `sys-001` or `sys-002`).
 
+## Web dashboard
+
+The Next.js dashboard in this repository (the `Dashboard-Frontend` working tree) talks to this
+API through a same-origin BFF. Route handlers own the JWT in an `httpOnly`, `SameSite=Lax` cookie and
+the catch-all `/api/[...path]` proxy streams request/response bodies without buffering, so MJPEG and
+`<img src="/api/events/{id}/face">` work while the token never reaches browser JavaScript.
+
+Local development:
+
+```bash
+# from the Dashboard-Frontend repository root
+cp .env.example .env.local   # BACKEND_URL=http://localhost:8080
+npm install
+npm run dev                  # http://localhost:3000
+```
+
+`compose.yaml` also defines a `dashboard` service on port `3000` with
+`BACKEND_URL=http://security-camera-backend:8080`.
+
 ## Raspberry Pi capture daemon
 
 The Raspberry Pi 5 daemon lives in [`Security-Camera-Pi/`](Security-Camera-Pi/README.md). It runs

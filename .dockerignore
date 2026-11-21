@@ -1,0 +1,17 @@
+.git
+.gitignore
+.idea
+.next
+node_modules
+npm-debug.log*
+README.md
+Dockerfile
+.dockerignore
+.env
+.env.*
+!.env.example
+
+# The compose build context is this directory; never ship the other projects.
+Security-Camera-Backend
+Security-Camera-Pi
+tests
