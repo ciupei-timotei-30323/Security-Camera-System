@@ -1,4 +1,4 @@
-﻿services:
+services:
   security-camera-backend:
     image: security-camera-backend
     build:
@@ -9,12 +9,25 @@
       PiAuth__ApiKey: ${PiAuth__ApiKey}
       PiAuth__DefaultSystemId: ${PiAuth__DefaultSystemId:-sys-001}
       PiAuth__Systems__sys-002: ${PiAuth__Systems__sys-002:-dev-only-api-key-sys-002}
+      PiAuth__AlertTerminalSystems__sys-001: ${PiAuth__AlertTerminalSystems__sys-001:-dev-alert-terminal-key-sys-001}
+      PiAuth__AlertTerminalSystems__sys-002: ${PiAuth__AlertTerminalSystems__sys-002:-dev-alert-terminal-key-sys-002}
       Storage__CapturesDirectory: /data/captures
-      Storage__PublicRequestPath: /captures
       CvService__BaseUrl: http://cv-service:8000
       CvService__TimeoutSeconds: 10
       Admin__DeviceCode: ${Admin__DeviceCode}
       Jwt__Secret: ${Jwt__Secret}
+      # Outbound suspect alerts. Mailpit catches development e-mail at http://localhost:8025.
+      Notifications__EmailCooldownSeconds: ${Notifications__EmailCooldownSeconds:-60}
+      Notifications__DashboardBaseUrl: ${Notifications__DashboardBaseUrl:-http://localhost:5173}
+      Notifications__EmailRetryBaseDelayMilliseconds: ${Notifications__EmailRetryBaseDelayMilliseconds:-1000}
+      Smtp__Host: ${Smtp__Host:-mailpit}
+      Smtp__Port: ${Smtp__Port:-1025}
+      Smtp__UseStartTls: ${Smtp__UseStartTls:-false}
+      Smtp__Username: ${Smtp__Username:-}
+      Smtp__Password: ${Smtp__Password:-}
+      Smtp__FromAddress: ${Smtp__FromAddress:-alerts@security-camera.local}
+      Smtp__FromName: ${Smtp__FromName:-Security Camera}
+      Alarm__DurationSeconds: ${Alarm__DurationSeconds:-15}
       # Factory-admin validation. Set UseStub=false and BaseUrl to the real IAM service later.
       ExternalAuth__UseStub: ${ExternalAuth__UseStub:-true}
       ExternalAuth__BaseUrl: ${ExternalAuth__BaseUrl:-http://external-auth:8080}
@@ -33,6 +46,16 @@
     depends_on:
       cv-service:
         condition: service_healthy
+      mailpit:
+        condition: service_started
+    restart: unless-stopped
+
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web UI: http://localhost:8025
     restart: unless-stopped
 
 

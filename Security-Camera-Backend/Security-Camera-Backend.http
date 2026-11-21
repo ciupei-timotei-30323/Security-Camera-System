@@ -1,6 +1,7 @@
 @Security_Camera_Backend_HostAddress = http://localhost:8080
 @ApiKey = dev-only-api-key
 @ApiKeySys002 = dev-only-api-key-sys-002
+@AlertTerminalKeySys001 = dev-alert-terminal-key-sys-001
 @TokenSys001 = paste-token-from-cam_admin_1-login
 @TokenSys002 = paste-token-from-cam_admin_2-login
 
@@ -18,6 +19,10 @@ Content-Type: image/jpeg
 Content-Disposition: form-data; name="isOfflineSync"
 
 false
+------boundary
+Content-Disposition: form-data; name="clientEventId"
+
+6f9619ff-8b86-d011-b42d-00c04fc964ff
 ------boundary--
 
 ### Pi motion ingestion for the second camera system
@@ -58,6 +63,29 @@ Content-Type: image/jpeg
 
 < ./frame.jpg
 ------boundary--
+
+### Live preview upload (raw JPEG, max 200 KB, 5 req/s per API key)
+POST {{Security_Camera_Backend_HostAddress}}/api/camera/frame
+X-Api-Key: {{ApiKey}}
+Content-Type: image/jpeg
+
+< ./frame.jpg
+
+### Latest live preview frame (204 when absent or older than 10 s)
+GET {{Security_Camera_Backend_HostAddress}}/api/camera/latest
+Authorization: Bearer {{TokenSys001}}
+
+### Live MJPEG stream
+GET {{Security_Camera_Backend_HostAddress}}/api/camera/stream
+Authorization: Bearer {{TokenSys001}}
+
+### Device/backend/cv-service status for the authenticated system
+GET {{Security_Camera_Backend_HostAddress}}/api/system/status
+Authorization: Bearer {{TokenSys001}}
+
+### Alert terminal status (X-Api-Key must belong to an AlertTerminal device)
+GET {{Security_Camera_Backend_HostAddress}}/api/device/status
+X-Api-Key: {{AlertTerminalKeySys001}}
 
 ### Built-in sys-001 admin login (initial password = physical device code / Admin__DeviceCode)
 POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
@@ -128,19 +156,43 @@ Content-Type: application/json
 GET {{Security_Camera_Backend_HostAddress}}/api/users
 Authorization: Bearer {{TokenSys001}}
 
-### Entrance logs (only the authenticated user's system)
-GET {{Security_Camera_Backend_HostAddress}}/api/events?limit=100
+### Delete a sub-user (not yourself or the factory admin)
+DELETE {{Security_Camera_Backend_HostAddress}}/api/users/2
 Authorization: Bearer {{TokenSys001}}
 
-### Read away-mode settings (row auto-created with isArmed = true)
-GET {{Security_Camera_Backend_HostAddress}}/api/away-mode-settings
+### Paged entrance logs (only the authenticated user's system)
+GET {{Security_Camera_Backend_HostAddress}}/api/events?page=1&pageSize=20&suspectOnly=false
 Authorization: Bearer {{TokenSys001}}
 
-### Update away-mode settings for the authenticated user's system
-PUT {{Security_Camera_Backend_HostAddress}}/api/away-mode-settings
+### One entrance log
+GET {{Security_Camera_Backend_HostAddress}}/api/events/1
+Authorization: Bearer {{TokenSys001}}
+
+### Event images (tenant-scoped, Cache-Control: private)
+GET {{Security_Camera_Backend_HostAddress}}/api/events/1/face
+Authorization: Bearer {{TokenSys001}}
+
+###
+GET {{Security_Camera_Backend_HostAddress}}/api/events/1/annotated
+Authorization: Bearer {{TokenSys001}}
+
+### Delete an event and its image files (Admin only)
+DELETE {{Security_Camera_Backend_HostAddress}}/api/events/1
+Authorization: Bearer {{TokenSys001}}
+
+### Read away-mode settings (row auto-created as indefinite)
+GET {{Security_Camera_Backend_HostAddress}}/api/settings/away-mode
+Authorization: Bearer {{TokenSys001}}
+
+### Update away-mode settings (legacy shape still accepted)
+PUT {{Security_Camera_Backend_HostAddress}}/api/settings/away-mode
 Authorization: Bearer {{TokenSys001}}
 Content-Type: application/json
 
 {
-  "isArmed": false
+  "mode": "scheduled",
+  "startTime": "22:00",
+  "endTime": "06:00",
+  "alertEmail": "alerts@example.com",
+  "timeZone": "Europe/Bucharest"
 }

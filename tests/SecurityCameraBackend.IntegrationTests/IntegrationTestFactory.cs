@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Security_Camera_Backend.Services.Notifications;
 using Testcontainers.PostgreSql;
 using Xunit;
 
@@ -23,6 +25,13 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
     public const string FactoryAdmin1Password = "factory-pass-sys-001";
     public const string FactoryAdmin2 = "cam_admin_2";
     public const string FactoryAdmin2Password = "factory-pass-sys-002";
+    public const string FactoryAdmin3 = "cam_admin_3";
+    public const string FactoryAdmin3Password = "factory-pass-sys-003";
+    public const string PiApiKeySys003 = "test-pi-api-key-sys-003";
+    public const string PiApiKeyRateLimit = "test-pi-rate-limit-key";
+    public const string AlertTerminalKeySys001 = "test-alert-terminal-key-sys-001";
+    public const string AlertTerminalKeySys002 = "test-alert-terminal-key-sys-002";
+    public const string AlertTerminalKeySys003 = "test-alert-terminal-key-sys-003";
 
 #pragma warning disable CS0618 // Testcontainers deprecated the parameterless builder ctor; the requested form is kept.
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
@@ -35,6 +44,8 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
     public string CapturesDirectory { get; } =
         Path.Combine(Path.GetTempPath(), $"security-camera-captures-{Guid.NewGuid():N}");
 
+    public FakeSmtpSender EmailSender { get; } = new();
+
     // Program reads DB_URL while registering services, i.e. before WebApplicationFactory can
     // apply ConfigureAppConfiguration callbacks. Process environment variables are therefore the
     // only override that is guaranteed to be visible to that code.
@@ -46,6 +57,18 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
         ["PiAuth__ApiKey"] = PiApiKey,
         ["PiAuth__DefaultSystemId"] = "sys-001",
         ["PiAuth__Systems__sys-002"] = PiApiKeySys002,
+        ["PiAuth__Systems__sys-003"] = PiApiKeySys003,
+        ["PiAuth__Systems__sys-ratelimit"] = PiApiKeyRateLimit,
+        ["PiAuth__AlertTerminalSystems__sys-001"] = AlertTerminalKeySys001,
+        ["PiAuth__AlertTerminalSystems__sys-002"] = AlertTerminalKeySys002,
+        ["PiAuth__AlertTerminalSystems__sys-003"] = AlertTerminalKeySys003,
+        ["Notifications__EmailCooldownSeconds"] = "1",
+        ["Notifications__DashboardBaseUrl"] = "http://dashboard.test",
+        ["Notifications__EmailRetryBaseDelayMilliseconds"] = "10",
+        ["Smtp__Host"] = "localhost",
+        ["Smtp__Port"] = "1025",
+        ["Smtp__FromAddress"] = "alerts@test.local",
+        ["Alarm__DurationSeconds"] = "1",
         ["ExternalAuth__UseStub"] = "true",
         ["ExternalAuth__StubAccounts__cam_admin_1__SystemId"] = "sys-001",
         ["ExternalAuth__StubAccounts__cam_admin_1__Password"] = FactoryAdmin1Password,
@@ -53,6 +76,9 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
         ["ExternalAuth__StubAccounts__cam_admin_2__SystemId"] = "sys-002",
         ["ExternalAuth__StubAccounts__cam_admin_2__Password"] = FactoryAdmin2Password,
         ["ExternalAuth__StubAccounts__cam_admin_2__PiApiKey"] = "test-factory-pi-key-sys-002",
+        ["ExternalAuth__StubAccounts__cam_admin_3__SystemId"] = "sys-003",
+        ["ExternalAuth__StubAccounts__cam_admin_3__Password"] = FactoryAdmin3Password,
+        ["ExternalAuth__StubAccounts__cam_admin_3__PiApiKey"] = "test-factory-pi-key-sys-003",
         ["Storage__CapturesDirectory"] = CapturesDirectory,
         ["CvService__BaseUrl"] = "http://cv-service",
         ["ASPNETCORE_ENVIRONMENT"] = "Testing"
@@ -79,6 +105,9 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
             // application, so the default handler replaces the real cv-service call.
             services.ConfigureHttpClientDefaults(httpClient =>
                 httpClient.ConfigurePrimaryHttpMessageHandler(() => new StubCvServiceHandler()));
+
+            services.RemoveAll<ISmtpSender>();
+            services.AddSingleton<ISmtpSender>(EmailSender);
         });
     }
 
@@ -126,6 +155,14 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            if (request.Method == HttpMethod.Get && request.RequestUri?.AbsolutePath == "/health")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"status\":\"ok\"}", Encoding.UTF8, "application/json")
+                });
+            }
+
             if (request.Method != HttpMethod.Post || request.RequestUri?.AbsolutePath != "/analyze")
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));

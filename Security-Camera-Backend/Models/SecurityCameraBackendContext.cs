@@ -60,6 +60,16 @@ public class SecurityCameraBackendContext : DbContext
             device.Property(d => d.Name)
                 .HasMaxLength(128);
 
+            device.Property(d => d.DeviceType)
+                .IsRequired()
+                .HasMaxLength(32)
+                .HasConversion<string>()
+                .HasDefaultValue(DeviceType.Camera);
+
+            device.Property(d => d.LastSeenAt);
+
+            device.HasIndex(d => new { d.SystemId, d.DeviceType });
+
             device.Property(d => d.CreatedAtUtc)
                 .IsRequired()
                 .HasDefaultValueSql("timezone('utc', now())");
@@ -81,6 +91,16 @@ public class SecurityCameraBackendContext : DbContext
 
             setting.Property(s => s.IsArmed)
                 .IsRequired();
+
+            setting.Property(s => s.Mode)
+                .IsRequired();
+
+            setting.Property(s => s.TimeZone)
+                .IsRequired()
+                .HasMaxLength(64);
+
+            setting.Property(s => s.AlertEmail)
+                .HasMaxLength(256);
 
             setting.Property(s => s.UpdatedAtUtc)
                 .IsRequired()
@@ -127,6 +147,11 @@ public class SecurityCameraBackendContext : DbContext
                 .HasMaxLength(64);
 
             detectionEvent.HasIndex(e => new { e.SystemId, e.Timestamp });
+
+            // Idempotency key supplied by the Pi. PostgreSQL treats nulls as distinct, so events
+            // without a key do not conflict.
+            detectionEvent.HasIndex(e => new { e.SystemId, e.ClientEventId })
+                .IsUnique();
         });
 
         modelBuilder.Entity<RevokedToken>(revokedToken =>

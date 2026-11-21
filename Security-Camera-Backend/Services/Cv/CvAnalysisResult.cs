@@ -17,4 +17,8 @@ public sealed class CvAnalysisResult
     /// <summary>Local path on the shared volume written by <c>cv-service</c>, e.g. <c>/data/captures/face_123.jpg</c>.</summary>
     [JsonPropertyName("face_crop_path")]
     public string? FaceCropPath { get; init; }
+
+    /// <summary>Local path of the annotated frame written by <c>cv-service</c>.</summary>
+    [JsonPropertyName("annotated_path")]
+    public string? AnnotatedImagePath { get; init; }
 }

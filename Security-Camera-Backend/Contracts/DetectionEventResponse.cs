@@ -11,7 +11,9 @@ public sealed record DetectionEventResponse(
     float? Confidence,
     string? DetectedFaceUrl,
     string? FullImageUrl,
-    bool IsOfflineSync)
+    bool IsOfflineSync,
+    Guid? ClientEventId = null,
+    string? AnnotatedImageUrl = null)
 {
     public static DetectionEventResponse FromEntity(DetectionEvent detectionEvent) => new(
         detectionEvent.Id,
@@ -19,7 +21,13 @@ public sealed record DetectionEventResponse(
         detectionEvent.Timestamp,
         detectionEvent.IsSuspect,
         detectionEvent.Confidence,
-        detectionEvent.DetectedFaceUri,
-        detectionEvent.FullImageUri,
-        detectionEvent.IsOfflineSync);
+        detectionEvent.DetectedFaceUri is null
+            ? null
+            : $"/api/events/{detectionEvent.Id}/face",
+        $"/api/events/{detectionEvent.Id}/annotated",
+        detectionEvent.IsOfflineSync,
+        detectionEvent.ClientEventId,
+        detectionEvent.AnnotatedImageUri is null
+            ? null
+            : $"/api/events/{detectionEvent.Id}/annotated");
 }

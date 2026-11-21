@@ -57,4 +57,26 @@ public sealed class UsersController(IUserManagementService userManagementService
 
         return Created($"/api/users/{created.Id}", created);
     }
+
+    /// <summary>
+    /// Deletes a sub-user. Cannot delete yourself or the factory admin; ids from another tenant
+    /// are treated as missing (404).
+    /// </summary>
+    [HttpDelete("{id:int}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Delete(int id, CancellationToken ct)
+    {
+        var deleted = await userManagementService.DeleteAsync(
+            User.GetRequiredSystemId(),
+            User.GetUserId(),
+            User.GetRequiredUsername(),
+            id,
+            ct);
+
+        return deleted ? NoContent() : NotFound();
+    }
 }

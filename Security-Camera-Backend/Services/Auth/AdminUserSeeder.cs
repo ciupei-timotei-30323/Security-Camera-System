@@ -28,15 +28,48 @@ public sealed class AdminUserSeeder(
         // Older deployments only had a single Pi. Keep that deployment working as sys-001 and
         // register its configured API key against the default system.
         var systemRegistry = scope.ServiceProvider.GetRequiredService<ISystemRegistry>();
-        var piApiKey = scope.ServiceProvider
+        var piAuth = scope.ServiceProvider
             .GetRequiredService<IOptions<PiAuthOptions>>()
-            .Value.ApiKey;
+            .Value;
 
         await systemRegistry.EnsureSystemExistsAsync(
             CameraSystem.DefaultSystemId,
             "Default camera system",
-            piApiKey,
+            piAuth.ApiKey,
             cancellationToken);
+
+        // Register every configured key as a real device so device tracking and system status
+        // work for both legacy and multi-tenant deployments.
+        foreach (var (systemId, apiKey) in piAuth.Systems)
+        {
+            if (string.IsNullOrWhiteSpace(systemId) || string.IsNullOrWhiteSpace(apiKey))
+            {
+                continue;
+            }
+
+            await systemRegistry.EnsureSystemExistsAsync(
+                systemId,
+                $"Camera system {systemId}",
+                apiKey,
+                cancellationToken);
+        }
+
+        // Alert terminals use the same provisioning path but are marked as AlertTerminal so
+        // camera keys cannot poll the terminal endpoint and terminals cannot ingest frames.
+        foreach (var (systemId, apiKey) in piAuth.AlertTerminalSystems)
+        {
+            if (string.IsNullOrWhiteSpace(systemId) || string.IsNullOrWhiteSpace(apiKey))
+            {
+                continue;
+            }
+
+            await systemRegistry.EnsureSystemExistsAsync(
+                systemId,
+                $"Camera system {systemId}",
+                apiKey,
+                cancellationToken,
+                DeviceType.AlertTerminal);
+        }
 
         var adminExists = await dbContext.Users
             .AnyAsync(

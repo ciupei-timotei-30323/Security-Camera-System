@@ -1,21 +1,25 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Security_Camera_Backend.Configuration;
+using Security_Camera_Backend.Controllers;
 using Security_Camera_Backend.Exceptions;
 using Security_Camera_Backend.Filters;
 using Security_Camera_Backend.Models;
 using Security_Camera_Backend.Services;
 using Security_Camera_Backend.Services.Auth;
+using Security_Camera_Backend.Services.Camera;
 using Security_Camera_Backend.Services.Cv;
 using Security_Camera_Backend.Services.ExternalAuth;
+using Security_Camera_Backend.Services.Notifications;
 using Security_Camera_Backend.Services.Settings;
 using Security_Camera_Backend.Services.Systems;
 using Security_Camera_Backend.Services.Users;
@@ -72,6 +76,9 @@ try
     builder.Services.Configure<CvServiceOptions>(builder.Configuration.GetSection(CvServiceOptions.SectionName));
     builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection(AdminOptions.SectionName));
     builder.Services.Configure<ExternalAuthOptions>(builder.Configuration.GetSection(ExternalAuthOptions.SectionName));
+    builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
+    builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.SectionName));
+    builder.Services.Configure<AlarmOptions>(builder.Configuration.GetSection(AlarmOptions.SectionName));
 
     // Development defaults to the configurable stub; production defaults to the real factory IAM.
     var useStubExternalAuth = builder.Configuration.GetValue<bool?>("ExternalAuth:UseStub")
@@ -194,7 +201,38 @@ try
     builder.Services.AddScoped<IAwayModeSettingsService, AwayModeSettingsService>();
     builder.Services.AddScoped<ISystemStateService, SystemStateService>();
     builder.Services.AddScoped<IEventQueryService, EventQueryService>();
-    builder.Services.AddSingleton<INotificationDispatcher, NoOpNotificationDispatcher>();
+
+    // Outbound alerts use a bounded channel so POST /api/events never waits for SMTP.
+    builder.Services.AddSingleton<SuspectAlertQueue>();
+    builder.Services.AddSingleton<EmailCooldownTracker>();
+    builder.Services.AddSingleton<INotificationDispatcher, QueuedNotificationDispatcher>();
+    builder.Services.AddSingleton<ISmtpSender, SmtpSender>();
+    builder.Services.AddScoped<INotifier, EmailNotifier>();
+    builder.Services.AddHostedService<SuspectAlertDispatcher>();
+    builder.Services.AddSingleton<IAlarmStateStore, AlarmStateStore>();
+
+    // Live preview is process-local: only one JPEG per system is retained.
+    builder.Services.AddSingleton<ILatestFrameStore, LatestFrameStore>();
+    builder.Services.AddSingleton<IFrameStreamLimiter, FrameStreamLimiter>();
+    builder.Services.AddMemoryCache();
+    builder.Services.AddSingleton<ICvServiceHealthService, CvServiceHealthService>();
+    builder.Services.AddScoped<ISystemStatusService, SystemStatusService>();
+    builder.Services.AddSingleton(TimeProvider.System);
+
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddPolicy(CameraController.FrameRateLimitPolicy, httpContext =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                httpContext.Request.Headers[PiApiKeyAuthFilter.HeaderName].ToString(),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 5,
+                    Window = TimeSpan.FromSeconds(1),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
+                }));
+    });
 
     builder.Services.AddHttpClient<ICvServiceClient, CvServiceClient>((serviceProvider, client) =>
     {
@@ -229,15 +267,11 @@ try
 
     app.UseHttpsRedirection();
 
-    // Serve saved JPEGs at /captures so the frontend can link directly to them.
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = new PhysicalFileProvider(capturesDirectory),
-        RequestPath = storageOptions.GetPublicRequestPath()
-    });
-
+    // Captures are intentionally not served as static files: images are only reachable through
+    // the tenant-scoped /api/events/{id}/face and /annotated endpoints.
     app.UseAuthentication();
     app.UseAuthorization();
+    app.UseRateLimiter();
 
     app.MapControllers();
 

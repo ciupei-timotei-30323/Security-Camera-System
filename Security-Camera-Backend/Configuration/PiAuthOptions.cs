@@ -24,4 +24,12 @@ public sealed class PiAuthOptions
     /// Environment variables use <c>PiAuth__Systems__sys-002</c>.
     /// </summary>
     public Dictionary<string, string> Systems { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Alert-terminal keys, keyed by <c>SystemId</c>. These devices may poll
+    /// <c>GET /api/device/status</c> but cannot ingest camera frames.
+    /// Environment variables use <c>PiAuth__AlertTerminalSystems__sys-001</c>.
+    /// </summary>
+    public Dictionary<string, string> AlertTerminalSystems { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
 }

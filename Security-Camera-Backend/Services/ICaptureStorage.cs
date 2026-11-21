@@ -21,6 +21,12 @@ public interface ICaptureStorage
     /// </summary>
     string ResolveExistingCapturePath(string? imagePath);
 
+    /// <summary>
+    /// Resolves an existing file inside the captures directory without throwing. Stored values are
+    /// normally bare file names, but legacy absolute/relative paths are accepted as well.
+    /// </summary>
+    string? TryResolveExistingCapturePath(string? storedPathOrFileName);
+
     /// <summary>Deletes a file on the shared volume; paths outside the captures directory are ignored.</summary>
     void TryDelete(string? filePath);
 }

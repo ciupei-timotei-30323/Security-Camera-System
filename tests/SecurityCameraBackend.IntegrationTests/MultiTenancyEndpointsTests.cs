@@ -177,21 +177,21 @@ public sealed class MultiTenancyEndpointsTests(IntegrationTestFactory factory)
         var sys1Response = await PostFrameAsync("test-factory-pi-key-sys-001", capturedAt);
         Assert.Equal(HttpStatusCode.Created, sys1Response.StatusCode);
 
-        var sys1Events = await admin1.GetFromJsonAsync<List<DetectionEventResponse>>("/api/events?limit=500");
-        var sys2Events = await admin2.GetFromJsonAsync<List<DetectionEventResponse>>("/api/events?limit=500");
+        var sys1Events = await admin1.GetFromJsonAsync<PagedEventsResponse>("/api/events?pageSize=100");
+        var sys2Events = await admin2.GetFromJsonAsync<PagedEventsResponse>("/api/events?pageSize=100");
 
         Assert.NotNull(sys1Events);
         Assert.NotNull(sys2Events);
 
-        Assert.Contains(sys1Events!, e =>
+        Assert.Contains(sys1Events!.Items, e =>
             e.SystemId == "sys-001" &&
             e.Timestamp.ToUnixTimeMilliseconds() == capturedAt.ToUnixTimeMilliseconds());
-        Assert.DoesNotContain(sys1Events!, e => e.SystemId == "sys-002");
+        Assert.DoesNotContain(sys1Events.Items, e => e.SystemId == "sys-002");
 
-        Assert.Contains(sys2Events!, e =>
+        Assert.Contains(sys2Events!.Items, e =>
             e.SystemId == "sys-002" &&
             e.Timestamp.ToUnixTimeMilliseconds() == capturedAt.ToUnixTimeMilliseconds());
-        Assert.DoesNotContain(sys2Events!, e => e.SystemId == "sys-001");
+        Assert.DoesNotContain(sys2Events.Items, e => e.SystemId == "sys-001");
     }
 
     [Fact]
@@ -224,8 +224,8 @@ public sealed class MultiTenancyEndpointsTests(IntegrationTestFactory factory)
             var response = await PostFrameAsync(IntegrationTestFactory.PiApiKey, capturedAt);
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
-            var events = await admin1.GetFromJsonAsync<List<DetectionEventResponse>>("/api/events?limit=500");
-            var newEvent = Assert.Single(events!, e =>
+            var events = await admin1.GetFromJsonAsync<PagedEventsResponse>("/api/events?pageSize=100");
+            var newEvent = Assert.Single(events!.Items, e =>
                 e.SystemId == "sys-001" &&
                 e.Timestamp.ToUnixTimeMilliseconds() == capturedAt.ToUnixTimeMilliseconds());
 
@@ -250,7 +250,7 @@ public sealed class MultiTenancyEndpointsTests(IntegrationTestFactory factory)
         form.Add(
             new StringContent(capturedAt.ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
             "capturedAt");
-        form.Add(new StringContent("false"), "isOfflineSync");
+        form.Add(new StringContent("true"), "isOfflineSync");
 
         return await client.PostAsync("/api/events", form);
     }

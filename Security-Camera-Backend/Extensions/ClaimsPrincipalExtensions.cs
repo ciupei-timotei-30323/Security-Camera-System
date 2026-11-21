@@ -1,3 +1,4 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Security_Camera_Backend.Exceptions;
 using Security_Camera_Backend.Services.Auth;
@@ -29,6 +30,18 @@ public static class ClaimsPrincipalExtensions
 
     public static string? GetUsername(this ClaimsPrincipal principal) =>
         principal.FindFirstValue(AuthClaimTypes.Name) ?? principal.Identity?.Name;
+
+    /// <summary>Parses the local user id from the <c>sub</c> claim; null for external admins.</summary>
+    public static int? GetUserId(this ClaimsPrincipal principal)
+    {
+        var rawUserId = principal.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                        ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        return int.TryParse(rawUserId, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var userId)
+            ? userId
+            : null;
+    }
 
     public static string GetRequiredUsername(this ClaimsPrincipal principal)
     {

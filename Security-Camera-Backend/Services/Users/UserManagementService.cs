@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Contracts;
 using Security_Camera_Backend.Exceptions;
 using Security_Camera_Backend.Models;
@@ -123,6 +124,46 @@ public sealed class UserManagementService(
             .SingleOrDefaultAsync(u => u.Id == userId && u.SystemId == systemId, ct);
 
         return user is null ? null : Map(user);
+    }
+
+    public async Task<bool> DeleteAsync(
+        string systemId,
+        int? requesterUserId,
+        string requesterUsername,
+        int userId,
+        CancellationToken ct)
+    {
+        var user = await dbContext.Users
+            .SingleOrDefaultAsync(u => u.Id == userId && u.SystemId == systemId, ct);
+
+        if (user is null)
+        {
+            return false;
+        }
+
+        if (requesterUserId == user.Id ||
+            string.Equals(requesterUsername, user.Username, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationAppException(
+                "You cannot delete your own account.",
+                $"Admin {requesterUsername} attempted to delete their own user {userId}.");
+        }
+
+        if (string.Equals(user.Username, AdminOptions.AdminUsername, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ValidationAppException(
+                "The factory admin account cannot be deleted.",
+                $"Attempted to delete built-in factory admin {userId}.");
+        }
+
+        dbContext.Users.Remove(user);
+        await dbContext.SaveChangesAsync(ct);
+
+        logger.LogInformation(
+            "Admin {AdminUsername} deleted sub-user {Username} ({UserId}) in system {SystemId}.",
+            requesterUsername, user.Username, user.Id, systemId);
+
+        return true;
     }
 
     private static UserSummaryResponse Map(User user) =>

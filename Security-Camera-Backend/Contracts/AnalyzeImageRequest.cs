@@ -4,4 +4,5 @@ namespace Security_Camera_Backend.Contracts;
 public sealed record AnalyzeImageRequest(
     string? ImagePath,
     DateTimeOffset? CapturedAt = null,
-    bool IsOfflineSync = false);
+    bool IsOfflineSync = false,
+    Guid? ClientEventId = null);

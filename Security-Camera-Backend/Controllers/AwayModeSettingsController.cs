@@ -39,7 +39,7 @@ public sealed class AwayModeSettingsController(IAwayModeSettingsService settings
     {
         var setting = await settingsService.UpdateAsync(
             User.GetRequiredSystemId(),
-            request.IsArmed,
+            request,
             ct);
 
         return Ok(setting);

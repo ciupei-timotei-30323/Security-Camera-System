@@ -19,6 +19,8 @@ public sealed class PiApiKeyAuthFilter : IAsyncActionFilter
 {
     public const string HeaderName = "X-Api-Key";
 
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
+
     /// <summary><see cref="HttpContext.Items"/> key holding the resolved system id.</summary>
     public const string SystemIdItemKey = "PiSystemId";
 
@@ -83,6 +85,8 @@ public sealed class PiApiKeyAuthFilter : IAsyncActionFilter
 
         context.HttpContext.Items[SystemIdItemKey] = systemId;
 
+        await TouchDeviceAsync(providedKey.ToString(), context.HttpContext.RequestAborted);
+
         _logger.LogDebug(
             "Resolved camera system {SystemId} for Pi request {Method} {Path}.",
             systemId, context.HttpContext.Request.Method, context.HttpContext.Request.Path);
@@ -125,6 +129,24 @@ public sealed class PiApiKeyAuthFilter : IAsyncActionFilter
             .Where(device => device.ApiKeyHash == apiKeyHash)
             .Select(device => device.SystemId)
             .SingleOrDefaultAsync(ct);
+    }
+
+    /// <summary>
+    /// Refreshes <see cref="PiDevice.LastSeenAt"/> for the authenticated key. The conditional
+    /// UPDATE makes the 5-second throttle atomic across concurrent requests and app instances.
+    /// </summary>
+    private async Task TouchDeviceAsync(string providedKey, CancellationToken ct)
+    {
+        var apiKeyHash = PiApiKeyHasher.HashToHex(providedKey);
+        var now = DateTime.UtcNow;
+        var cutoff = now - HeartbeatInterval;
+
+        await _dbContext.PiDevices
+            .Where(device => device.ApiKeyHash == apiKeyHash &&
+                             (device.LastSeenAt == null || device.LastSeenAt < cutoff))
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(device => device.LastSeenAt, now),
+                ct);
     }
 
     private static void ShortCircuit(ActionExecutingContext context) =>

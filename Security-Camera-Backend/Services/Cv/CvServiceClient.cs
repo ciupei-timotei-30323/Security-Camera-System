@@ -44,6 +44,13 @@ public sealed class CvServiceClient(HttpClient httpClient, ILogger<CvServiceClie
             statusCode: response.StatusCode);
     }
 
+    public async Task<bool> IsHealthyAsync(CancellationToken ct)
+    {
+        using var response = await httpClient.GetAsync("/health", ct);
+
+        return response.IsSuccessStatusCode;
+    }
+
     private static async Task<string> ReadErrorBodyAsync(HttpContent content, CancellationToken ct)
     {
         try

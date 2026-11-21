@@ -1,6 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
-using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Models;
 using Security_Camera_Backend.Services.Cv;
 
@@ -10,21 +8,32 @@ public sealed class DetectionProcessingService(
     SecurityCameraBackendContext dbContext,
     ICvServiceClient cvServiceClient,
     ISystemStateService systemStateService,
+    IAlarmStateStore alarmStateStore,
     INotificationDispatcher notificationDispatcher,
     ICaptureStorage captureStorage,
-    IOptions<StorageOptions> storageOptions,
     ILogger<DetectionProcessingService> logger) : IDetectionProcessingService
 {
-    private readonly StorageOptions _storage = storageOptions.Value;
-
     public async Task<DetectionProcessingResult> ProcessCapturedImageAsync(
         string rawFilePath,
         DateTimeOffset? capturedAt,
         bool isOfflineSync,
         string systemId,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? clientEventId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rawFilePath);
+
+        if (clientEventId is not null)
+        {
+            var existing = await FindByClientEventIdAsync(systemId, clientEventId.Value, ct);
+
+            if (existing is not null)
+            {
+                // A retry of an already-processed frame: keep the existing row and drop the upload.
+                captureStorage.TryDelete(rawFilePath);
+                return DetectionProcessingResult.Existing(existing);
+            }
+        }
 
         CvAnalysisResult analysis;
 
@@ -50,28 +59,55 @@ public sealed class DetectionProcessingService(
             return DetectionProcessingResult.NoDetection();
         }
 
-        var fullImageUrl = _storage.ToPublicUrl(rawFilePath);
-        var detectedFaceUrl = string.IsNullOrWhiteSpace(analysis.FaceCropPath)
-            ? null
-            : _storage.ToPublicUrl(analysis.FaceCropPath);
+        var timestamp = isOfflineSync && capturedAt is not null
+            ? capturedAt.Value.ToUniversalTime()
+            : DateTimeOffset.UtcNow;
 
         var detectionEvent = new DetectionEvent
         {
             SystemId = systemId,
             // Npgsql's timestamptz requires a strictly UTC instant.
-            Timestamp = capturedAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow,
-            IsSuspect = await systemStateService.IsArmedAsync(systemId, ct),
+            Timestamp = timestamp,
+            IsSuspect = await systemStateService.IsArmedAsync(systemId, timestamp, ct),
             Confidence = analysis.Confidence,
-            DetectedFaceUri = detectedFaceUrl,
-            FullImageUri = fullImageUrl,
+            DetectedFaceUri = ToStoredFileName(analysis.FaceCropPath),
+            FullImageUri = ToStoredFileName(rawFilePath),
+            AnnotatedImageUri = ToStoredFileName(analysis.AnnotatedImagePath),
             IsOfflineSync = isOfflineSync,
-            IsEmailSent = false
+            IsEmailSent = false,
+            ClientEventId = clientEventId
         };
 
         try
         {
             dbContext.DetectionEvents.Add(detectionEvent);
             await dbContext.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (clientEventId is not null)
+        {
+            // A concurrent retry inserted the same (systemId, clientEventId) first.
+            dbContext.Entry(detectionEvent).State = EntityState.Detached;
+            dbContext.ChangeTracker.Clear();
+
+            var existing = await FindByClientEventIdAsync(systemId, clientEventId.Value, ct);
+
+            if (existing is not null)
+            {
+                logger.LogInformation(
+                    "Concurrent idempotent retry for {ClientEventId} in system {SystemId}; returning event {EventId}.",
+                    clientEventId, systemId, existing.Id);
+
+                DeleteNewFiles(rawFilePath, analysis);
+                return DetectionProcessingResult.Existing(existing);
+            }
+
+            logger.LogError(ex,
+                "Failed to persist detection event for {RawFilePath}; removing newly created files.",
+                rawFilePath);
+
+            dbContext.ChangeTracker.Clear();
+            DeleteNewFiles(rawFilePath, analysis);
+            throw;
         }
         catch (Exception ex)
         {
@@ -80,8 +116,7 @@ public sealed class DetectionProcessingService(
                 rawFilePath);
 
             dbContext.Entry(detectionEvent).State = EntityState.Detached;
-            captureStorage.TryDelete(rawFilePath);
-            captureStorage.TryDelete(analysis.FaceCropPath);
+            DeleteNewFiles(rawFilePath, analysis);
             throw;
         }
 
@@ -92,11 +127,33 @@ public sealed class DetectionProcessingService(
 
         if (detectionEvent.IsSuspect)
         {
+            // The terminal alarm must react immediately; only the e-mail fan-out is queued.
+            alarmStateStore.Trigger(detectionEvent.SystemId);
             await DispatchSuspectAlertAsync(detectionEvent, ct);
         }
 
         return DetectionProcessingResult.Saved(detectionEvent);
     }
+
+    private Task<DetectionEvent?> FindByClientEventIdAsync(
+        string systemId,
+        Guid clientEventId,
+        CancellationToken ct) =>
+        dbContext.DetectionEvents
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                e => e.SystemId == systemId && e.ClientEventId == clientEventId,
+                ct);
+
+    private void DeleteNewFiles(string rawFilePath, CvAnalysisResult analysis)
+    {
+        captureStorage.TryDelete(rawFilePath);
+        captureStorage.TryDelete(analysis.FaceCropPath);
+        captureStorage.TryDelete(analysis.AnnotatedImagePath);
+    }
+
+    private static string? ToStoredFileName(string? path) =>
+        string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path);
 
     private async Task DispatchSuspectAlertAsync(DetectionEvent detectionEvent, CancellationToken ct)
     {

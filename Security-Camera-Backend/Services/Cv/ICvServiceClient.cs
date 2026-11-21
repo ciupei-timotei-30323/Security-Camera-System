@@ -8,4 +8,7 @@ public interface ICvServiceClient
     /// <param name="imagePath">Full path to the image on the shared volume.</param>
     /// <param name="ct">Cancellation token.</param>
     Task<CvAnalysisResult> AnalyzeImageAsync(string imagePath, CancellationToken ct);
+
+    /// <summary>Checks the internal cv-service <c>/health</c> endpoint.</summary>
+    Task<bool> IsHealthyAsync(CancellationToken ct);
 }

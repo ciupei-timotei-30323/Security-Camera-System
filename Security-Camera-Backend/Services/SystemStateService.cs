@@ -3,16 +3,20 @@ using Security_Camera_Backend.Services.Settings;
 namespace Security_Camera_Backend.Services;
 
 /// <summary>
-/// Database-backed arm/disarm state. A missing <see cref="Models.AwayModeSetting"/> row is
-/// created lazily as armed, so newly registered systems default to the historic behaviour.
+/// Database-backed away-mode state. A missing <see cref="Models.AwayModeSetting"/> row is
+/// created lazily as indefinite-armed, so newly registered systems default to the historic
+/// behaviour.
 /// </summary>
 public sealed class SystemStateService(IAwayModeSettingsService awayModeSettingsService)
     : ISystemStateService
 {
-    public async Task<bool> IsArmedAsync(string systemId, CancellationToken ct = default)
+    public async Task<bool> IsArmedAsync(
+        string systemId,
+        DateTimeOffset atUtc,
+        CancellationToken ct = default)
     {
-        var setting = await awayModeSettingsService.GetOrCreateAsync(systemId, ct);
+        var setting = await awayModeSettingsService.GetOrCreateEntityAsync(systemId, ct);
 
-        return setting.IsArmed;
+        return AwayModeSchedule.IsArmed(setting, atUtc);
     }
 }

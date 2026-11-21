@@ -28,8 +28,26 @@ namespace Security_Camera_Backend.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("AlertEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<TimeSpan?>("EndTime")
+                        .HasColumnType("interval");
+
                     b.Property<bool>("IsArmed")
                         .HasColumnType("boolean");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("integer");
+
+                    b.Property<TimeSpan?>("StartTime")
+                        .HasColumnType("interval");
+
+                    b.Property<string>("TimeZone")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<DateTime>("UpdatedAtUtc")
                         .ValueGeneratedOnAdd()
@@ -69,6 +87,12 @@ namespace Security_Camera_Backend.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("AnnotatedImageUri")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("ClientEventId")
+                        .HasColumnType("uuid");
+
                     b.Property<float?>("Confidence")
                         .HasColumnType("real");
 
@@ -97,6 +121,9 @@ namespace Security_Camera_Backend.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SystemId", "ClientEventId")
+                        .IsUnique();
+
                     b.HasIndex("SystemId", "Timestamp");
 
                     b.ToTable("DetectionEvents", (string)null);
@@ -120,6 +147,16 @@ namespace Security_Camera_Backend.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("timezone('utc', now())");
 
+                    b.Property<string>("DeviceType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("Camera");
+
+                    b.Property<DateTime?>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Name")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
@@ -135,6 +172,8 @@ namespace Security_Camera_Backend.Migrations
                         .IsUnique();
 
                     b.HasIndex("SystemId");
+
+                    b.HasIndex("SystemId", "DeviceType");
 
                     b.ToTable("PiDevices", (string)null);
                 });

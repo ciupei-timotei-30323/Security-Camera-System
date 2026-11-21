@@ -82,6 +82,30 @@ public sealed class CaptureStorage : ICaptureStorage
         return fullPath;
     }
 
+    public string? TryResolveExistingCapturePath(string? storedPathOrFileName)
+    {
+        if (string.IsNullOrWhiteSpace(storedPathOrFileName))
+        {
+            return null;
+        }
+
+        try
+        {
+            var fullPath = Path.IsPathRooted(storedPathOrFileName)
+                ? Path.GetFullPath(storedPathOrFileName)
+                : Path.GetFullPath(Path.Combine(_capturesRoot, storedPathOrFileName));
+
+            return fullPath.StartsWith(_capturesRoot, StringComparison.Ordinal) && File.Exists(fullPath)
+                ? fullPath
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve capture path {StoredPath}.", storedPathOrFileName);
+            return null;
+        }
+    }
+
     public void TryDelete(string? filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath))
@@ -91,7 +115,9 @@ public sealed class CaptureStorage : ICaptureStorage
 
         try
         {
-            var fullPath = Path.GetFullPath(filePath);
+            var fullPath = Path.IsPathRooted(filePath)
+                ? Path.GetFullPath(filePath)
+                : Path.GetFullPath(Path.Combine(_capturesRoot, filePath));
 
             if (!fullPath.StartsWith(_capturesRoot, StringComparison.Ordinal))
             {

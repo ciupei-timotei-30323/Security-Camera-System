@@ -14,7 +14,8 @@ public interface ISystemRegistry
         string systemId,
         string? displayName,
         string? piApiKey,
-        CancellationToken ct);
+        CancellationToken ct,
+        DeviceType deviceType = DeviceType.Camera);
 }
 
 public sealed class SystemRegistry(
@@ -25,7 +26,8 @@ public sealed class SystemRegistry(
         string systemId,
         string? displayName,
         string? piApiKey,
-        CancellationToken ct)
+        CancellationToken ct,
+        DeviceType deviceType = DeviceType.Camera)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(systemId);
 
@@ -60,7 +62,10 @@ public sealed class SystemRegistry(
                 {
                     SystemId = systemId,
                     ApiKeyHash = apiKeyHash,
-                    Name = $"{displayName ?? systemId} camera kit",
+                    Name = deviceType == DeviceType.AlertTerminal
+                        ? $"{displayName ?? systemId} alert terminal"
+                        : $"{displayName ?? systemId} camera kit",
+                    DeviceType = deviceType,
                     CreatedAtUtc = DateTime.UtcNow
                 });
             }

@@ -18,7 +18,12 @@ public class DetectionEvent
     public string? FullImageUri { get; set; }
     
     public bool IsOfflineSync { get; set; }
-    
+
     public bool IsEmailSent { get; set; }
-    
+
+    /// <summary>Idempotency key supplied by the Pi; unique per system when present.</summary>
+    public Guid? ClientEventId { get; set; }
+
+    /// <summary>File name (not a public URL) of the annotated frame on the captures volume.</summary>
+    public string? AnnotatedImageUri { get; set; }
 }
