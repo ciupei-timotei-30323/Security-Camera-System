@@ -6,22 +6,22 @@ sub-user, entrance log, away-mode setting and Pi API key belongs to exactly one 
 
 ## Web dashboard
 
-The Next.js dashboard in this repository (the `Dashboard-Frontend` working tree) talks to this
-API through a same-origin BFF. Route handlers own the JWT in an `httpOnly`, `SameSite=Lax` cookie and
+The Next.js dashboard lives in [`frontend/`](frontend/) and talks to this API through a
+same-origin BFF. Route handlers own the JWT in an `httpOnly`, `SameSite=Lax` cookie and
 the catch-all `/api/[...path]` proxy streams request/response bodies without buffering, so MJPEG and
 `<img src="/api/events/{id}/face">` work while the token never reaches browser JavaScript.
 
 Local development:
 
 ```bash
-# from the Dashboard-Frontend repository root
+cd frontend
 cp .env.example .env.local   # BACKEND_URL=http://localhost:8080
 npm install
 npm run dev                  # http://localhost:3000
 ```
 
-`compose.yaml` also defines a `dashboard` service on port `3000` with
-`BACKEND_URL=http://security-camera-backend:8080`.
+`Security-Camera-Backend/compose.yaml` also defines a `dashboard` service on port `3000`
+with `BACKEND_URL=http://security-camera-backend:8080`.
 
 ## Raspberry Pi capture daemon
 

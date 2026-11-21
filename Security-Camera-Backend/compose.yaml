@@ -54,7 +54,7 @@ services:
   dashboard:
     image: security-camera-dashboard
     build:
-      context: ..
+      context: ../frontend
       dockerfile: Dockerfile
     environment:
       # Server-side BFF target. The browser only talks to the dashboard origin.

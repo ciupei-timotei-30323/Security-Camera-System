@@ -10,9 +10,6 @@ export default defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    "Security-Camera-Backend/**",
-    "Security-Camera-Pi/**",
-    "tests/**",
     "node_modules/**",
   ]),
 ]);

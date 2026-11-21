@@ -25,5 +25,5 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules", "Security-Camera-Backend", "Security-Camera-Pi", "tests"]
+  "exclude": ["node_modules"]
 }
