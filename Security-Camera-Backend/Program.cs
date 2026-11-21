@@ -15,6 +15,10 @@ using Security_Camera_Backend.Models;
 using Security_Camera_Backend.Services;
 using Security_Camera_Backend.Services.Auth;
 using Security_Camera_Backend.Services.Cv;
+using Security_Camera_Backend.Services.ExternalAuth;
+using Security_Camera_Backend.Services.Settings;
+using Security_Camera_Backend.Services.Systems;
+using Security_Camera_Backend.Services.Users;
 using Serilog.Configuration;
 using Serilog;
 
@@ -67,6 +71,35 @@ try
     builder.Services.Configure<StorageOptions>(builder.Configuration.GetSection(StorageOptions.SectionName));
     builder.Services.Configure<CvServiceOptions>(builder.Configuration.GetSection(CvServiceOptions.SectionName));
     builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection(AdminOptions.SectionName));
+    builder.Services.Configure<ExternalAuthOptions>(builder.Configuration.GetSection(ExternalAuthOptions.SectionName));
+
+    // Development defaults to the configurable stub; production defaults to the real factory IAM.
+    var useStubExternalAuth = builder.Configuration.GetValue<bool?>("ExternalAuth:UseStub")
+                              ?? builder.Environment.IsDevelopment();
+    var externalAuthBaseUrl = builder.Configuration["ExternalAuth:BaseUrl"];
+
+    if (!useStubExternalAuth && string.IsNullOrWhiteSpace(externalAuthBaseUrl))
+    {
+        throw new InvalidOperationException(
+            "ExternalAuth:BaseUrl is required when ExternalAuth:UseStub is false.");
+    }
+
+    builder.Services.AddHttpClient(HttpExternalAdminAuthClient.HttpClientName, (serviceProvider, client) =>
+    {
+        var externalAuth = serviceProvider.GetRequiredService<IOptions<ExternalAuthOptions>>().Value;
+
+        client.BaseAddress = new Uri(externalAuth.BaseUrl, UriKind.Absolute);
+        client.Timeout = TimeSpan.FromSeconds(Math.Max(1, externalAuth.TimeoutSeconds));
+    });
+
+    if (useStubExternalAuth)
+    {
+        builder.Services.AddScoped<IExternalAdminAuthClient, StubExternalAdminAuthClient>();
+    }
+    else
+    {
+        builder.Services.AddScoped<IExternalAdminAuthClient, HttpExternalAdminAuthClient>();
+    }
 
     builder.Services.AddOptions<JwtOptions>()
         .Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
@@ -85,6 +118,8 @@ try
     builder.Services.AddScoped<IAuthService, AuthService>();
     builder.Services.AddScoped<ITokenRevocationService, TokenRevocationService>();
     builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
+    builder.Services.AddScoped<ISystemRegistry, SystemRegistry>();
+    builder.Services.AddScoped<IUserManagementService, UserManagementService>();
     builder.Services.AddHostedService<AdminUserSeeder>();
 
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -106,8 +141,8 @@ try
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Secret)),
                 ValidateLifetime = true,
                 ClockSkew = TimeSpan.FromSeconds(30),
-                NameClaimType = ClaimTypes.Name,
-                RoleClaimType = ClaimTypes.Role
+                NameClaimType = AuthClaimTypes.Name,
+                RoleClaimType = AuthClaimTypes.Role
             };
 
             options.Events = new JwtBearerEvents
@@ -156,7 +191,9 @@ try
     builder.Services.AddSingleton<ICaptureStorage, CaptureStorage>();
     builder.Services.AddScoped<IDetectionProcessingService, DetectionProcessingService>();
     builder.Services.AddScoped<IEventIngestionService, EventIngestionService>();
-    builder.Services.AddSingleton<ISystemStateService, SystemStateService>();
+    builder.Services.AddScoped<IAwayModeSettingsService, AwayModeSettingsService>();
+    builder.Services.AddScoped<ISystemStateService, SystemStateService>();
+    builder.Services.AddScoped<IEventQueryService, EventQueryService>();
     builder.Services.AddSingleton<INotificationDispatcher, NoOpNotificationDispatcher>();
 
     builder.Services.AddHttpClient<ICvServiceClient, CvServiceClient>((serviceProvider, client) =>

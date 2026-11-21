@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Models;
+using Security_Camera_Backend.Services.Systems;
 
 namespace Security_Camera_Backend.Services.Auth;
 
@@ -24,8 +25,24 @@ public sealed class AdminUserSeeder(
         logger.LogInformation("Applying pending database migrations...");
         await dbContext.Database.MigrateAsync(cancellationToken);
 
+        // Older deployments only had a single Pi. Keep that deployment working as sys-001 and
+        // register its configured API key against the default system.
+        var systemRegistry = scope.ServiceProvider.GetRequiredService<ISystemRegistry>();
+        var piApiKey = scope.ServiceProvider
+            .GetRequiredService<IOptions<PiAuthOptions>>()
+            .Value.ApiKey;
+
+        await systemRegistry.EnsureSystemExistsAsync(
+            CameraSystem.DefaultSystemId,
+            "Default camera system",
+            piApiKey,
+            cancellationToken);
+
         var adminExists = await dbContext.Users
-            .AnyAsync(u => u.Username == AdminOptions.AdminUsername, cancellationToken);
+            .AnyAsync(
+                u => u.Username == AdminOptions.AdminUsername &&
+                     u.SystemId == CameraSystem.DefaultSystemId,
+                cancellationToken);
 
         if (adminExists)
         {
@@ -46,6 +63,7 @@ public sealed class AdminUserSeeder(
 
         var admin = new User
         {
+            SystemId = CameraSystem.DefaultSystemId,
             Username = AdminOptions.AdminUsername,
             Role = UserRoles.Admin,
             CreatedAtUtc = DateTime.UtcNow
@@ -56,7 +74,9 @@ public sealed class AdminUserSeeder(
         dbContext.Users.Add(admin);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        logger.LogInformation("Seeded built-in admin user {Username}.", admin.Username);
+        logger.LogInformation(
+            "Seeded built-in admin user {Username} for system {SystemId}.",
+            admin.Username, admin.SystemId);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

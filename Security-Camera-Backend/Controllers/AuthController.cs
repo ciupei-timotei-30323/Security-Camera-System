@@ -24,7 +24,11 @@ public sealed class AuthController(IAuthService authService) : ControllerBase
         [FromBody] LoginRequest request,
         CancellationToken ct)
     {
-        var response = await authService.LoginAsync(request.Username, request.Password, ct);
+        var response = await authService.LoginAsync(
+            request.Username,
+            request.Password,
+            request.SystemId,
+            ct);
 
         return Ok(response);
     }

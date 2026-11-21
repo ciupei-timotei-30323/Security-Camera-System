@@ -13,20 +13,42 @@ public sealed class JwtTokenService(IOptions<JwtOptions> jwtOptions) : IJwtToken
 {
     private readonly JwtOptions _jwt = jwtOptions.Value;
 
-    public JwtToken CreateToken(User user)
+    public JwtToken CreateToken(User user) =>
+        CreateToken(
+            user.Id.ToString(CultureInfo.InvariantCulture),
+            user.Username,
+            user.Role,
+            user.SystemId);
+
+    public JwtToken CreateToken(
+        string subject,
+        string username,
+        string role,
+        string systemId,
+        bool externalAdmin = false)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(subject);
+        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        ArgumentException.ThrowIfNullOrWhiteSpace(role);
+        ArgumentException.ThrowIfNullOrWhiteSpace(systemId);
+
         // Whole seconds keep `exp`/`nbf` and the API response free of sub-second noise.
         var issuedAt = TruncateToSeconds(DateTime.UtcNow);
         var expiresAt = issuedAt.AddMinutes(Math.Max(1, _jwt.ExpirationMinutes));
 
         var claims = new List<Claim>
         {
-            new(JwtRegisteredClaimNames.Sub, user.Id.ToString(CultureInfo.InvariantCulture)),
-            new(ClaimTypes.NameIdentifier, user.Id.ToString(CultureInfo.InvariantCulture)),
-            new(ClaimTypes.Name, user.Username),
-            new(ClaimTypes.Role, user.Role),
+            new(JwtRegisteredClaimNames.Sub, subject),
+            new(AuthClaimTypes.Name, username),
+            new(AuthClaimTypes.Role, role),
+            new(AuthClaimTypes.SystemId, systemId),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
         };
+
+        if (externalAdmin)
+        {
+            claims.Add(new Claim(AuthClaimTypes.ExternalAdmin, "true"));
+        }
 
         var signingCredentials = new SigningCredentials(
             new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Secret)),

@@ -22,6 +22,45 @@ namespace Security_Camera_Backend.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Security_Camera_Backend.Models.AwayModeSetting", b =>
+                {
+                    b.Property<string>("SystemId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("IsArmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.HasKey("SystemId");
+
+                    b.ToTable("AwayModeSettings", (string)null);
+                });
+
+            modelBuilder.Entity("Security_Camera_Backend.Models.CameraSystem", b =>
+                {
+                    b.Property<string>("SystemId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("SystemId");
+
+                    b.ToTable("CameraSystems", (string)null);
+                });
+
             modelBuilder.Entity("Security_Camera_Backend.Models.DetectionEvent", b =>
                 {
                     b.Property<int>("Id")
@@ -48,12 +87,56 @@ namespace Security_Camera_Backend.Migrations
                     b.Property<bool>("IsSuspect")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("SystemId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<DateTimeOffset>("Timestamp")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("Id");
 
-                    b.ToTable("DetectionEvents");
+                    b.HasIndex("SystemId", "Timestamp");
+
+                    b.ToTable("DetectionEvents", (string)null);
+                });
+
+            modelBuilder.Entity("Security_Camera_Backend.Models.PiDevice", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ApiKeyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("timezone('utc', now())");
+
+                    b.Property<string>("Name")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("SystemId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiKeyHash")
+                        .IsUnique();
+
+                    b.HasIndex("SystemId");
+
+                    b.ToTable("PiDevices", (string)null);
                 });
 
             modelBuilder.Entity("Security_Camera_Backend.Models.RevokedToken", b =>
@@ -107,6 +190,11 @@ namespace Security_Camera_Backend.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<string>("SystemId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("Username")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -114,10 +202,26 @@ namespace Security_Camera_Backend.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Username")
+                    b.HasIndex("SystemId", "Username")
                         .IsUnique();
 
                     b.ToTable("Users", (string)null);
+                });
+
+            modelBuilder.Entity("Security_Camera_Backend.Models.PiDevice", b =>
+                {
+                    b.HasOne("Security_Camera_Backend.Models.CameraSystem", "System")
+                        .WithMany("PiDevices")
+                        .HasForeignKey("SystemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("System");
+                });
+
+            modelBuilder.Entity("Security_Camera_Backend.Models.CameraSystem", b =>
+                {
+                    b.Navigation("PiDevices");
                 });
 #pragma warning restore 612, 618
         }

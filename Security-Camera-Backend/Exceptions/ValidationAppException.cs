@@ -8,8 +8,8 @@ namespace Security_Camera_Backend.Exceptions;
 /// </summary>
 public sealed class ValidationAppException : AppException
 {
-    public ValidationAppException(string publicMessage, string internalMessage)
-        : base(publicMessage, internalMessage, HttpStatusCode.BadRequest)
+    public ValidationAppException(string publicMessage, string internalMessage, string? errorCode = null)
+        : base(publicMessage, internalMessage, HttpStatusCode.BadRequest, errorCode)
     {
     }
 }

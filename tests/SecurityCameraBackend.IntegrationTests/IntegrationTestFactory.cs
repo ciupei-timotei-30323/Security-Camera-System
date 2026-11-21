@@ -18,6 +18,11 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
     public const string AdminDeviceCode = "TEST-CAM-1234";
     public const string JwtSecret = "super-secret-integration-test-key-at-least-32-chars";
     public const string PiApiKey = "test-pi-api-key-12345";
+    public const string PiApiKeySys002 = "test-pi-api-key-sys-002";
+    public const string FactoryAdmin1 = "cam_admin_1";
+    public const string FactoryAdmin1Password = "factory-pass-sys-001";
+    public const string FactoryAdmin2 = "cam_admin_2";
+    public const string FactoryAdmin2Password = "factory-pass-sys-002";
 
 #pragma warning disable CS0618 // Testcontainers deprecated the parameterless builder ctor; the requested form is kept.
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder()
@@ -39,6 +44,15 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
         ["Admin__DeviceCode"] = AdminDeviceCode,
         ["Jwt__Secret"] = JwtSecret,
         ["PiAuth__ApiKey"] = PiApiKey,
+        ["PiAuth__DefaultSystemId"] = "sys-001",
+        ["PiAuth__Systems__sys-002"] = PiApiKeySys002,
+        ["ExternalAuth__UseStub"] = "true",
+        ["ExternalAuth__StubAccounts__cam_admin_1__SystemId"] = "sys-001",
+        ["ExternalAuth__StubAccounts__cam_admin_1__Password"] = FactoryAdmin1Password,
+        ["ExternalAuth__StubAccounts__cam_admin_1__PiApiKey"] = "test-factory-pi-key-sys-001",
+        ["ExternalAuth__StubAccounts__cam_admin_2__SystemId"] = "sys-002",
+        ["ExternalAuth__StubAccounts__cam_admin_2__Password"] = FactoryAdmin2Password,
+        ["ExternalAuth__StubAccounts__cam_admin_2__PiApiKey"] = "test-factory-pi-key-sys-002",
         ["Storage__CapturesDirectory"] = CapturesDirectory,
         ["CvService__BaseUrl"] = "http://cv-service",
         ["ASPNETCORE_ENVIRONMENT"] = "Testing"

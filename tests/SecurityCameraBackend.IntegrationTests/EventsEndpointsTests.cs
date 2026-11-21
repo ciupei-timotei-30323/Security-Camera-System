@@ -87,6 +87,7 @@ public sealed class EventsEndpointsTests(IntegrationTestFactory factory)
 
         var detectionEvent = Assert.Single(newEvents);
 
+        Assert.Equal("sys-001", detectionEvent.SystemId);
         Assert.Equal(capturedAt.ToUnixTimeMilliseconds(), detectionEvent.Timestamp.ToUnixTimeMilliseconds());
         Assert.True(detectionEvent.IsSuspect);
         Assert.False(detectionEvent.IsOfflineSync);

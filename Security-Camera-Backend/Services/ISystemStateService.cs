@@ -1,10 +1,10 @@
 namespace Security_Camera_Backend.Services;
 
 /// <summary>
-/// Provides the current arm/disarm state of the security system.
-/// Will later be backed by persisted database settings.
+/// Provides the current arm/disarm state of a camera system, backed by
+/// <see cref="Models.AwayModeSetting"/>.
 /// </summary>
 public interface ISystemStateService
 {
-    Task<bool> IsArmedAsync(CancellationToken ct = default);
+    Task<bool> IsArmedAsync(string systemId, CancellationToken ct = default);
 }

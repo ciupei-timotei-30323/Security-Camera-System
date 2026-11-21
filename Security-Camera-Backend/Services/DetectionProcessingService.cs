@@ -21,6 +21,7 @@ public sealed class DetectionProcessingService(
         string rawFilePath,
         DateTimeOffset? capturedAt,
         bool isOfflineSync,
+        string systemId,
         CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(rawFilePath);
@@ -56,9 +57,10 @@ public sealed class DetectionProcessingService(
 
         var detectionEvent = new DetectionEvent
         {
+            SystemId = systemId,
             // Npgsql's timestamptz requires a strictly UTC instant.
             Timestamp = capturedAt?.ToUniversalTime() ?? DateTimeOffset.UtcNow,
-            IsSuspect = await systemStateService.IsArmedAsync(ct),
+            IsSuspect = await systemStateService.IsArmedAsync(systemId, ct),
             Confidence = analysis.Confidence,
             DetectedFaceUri = detectedFaceUrl,
             FullImageUri = fullImageUrl,
@@ -84,8 +86,9 @@ public sealed class DetectionProcessingService(
         }
 
         logger.LogInformation(
-            "Recorded detection event {EventId} (suspect: {IsSuspect}, offline sync: {IsOfflineSync}) from {RawFilePath}",
-            detectionEvent.Id, detectionEvent.IsSuspect, detectionEvent.IsOfflineSync, rawFilePath);
+            "Recorded detection event {EventId} for system {SystemId} (suspect: {IsSuspect}, offline sync: {IsOfflineSync}) from {RawFilePath}",
+            detectionEvent.Id, detectionEvent.SystemId, detectionEvent.IsSuspect,
+            detectionEvent.IsOfflineSync, rawFilePath);
 
         if (detectionEvent.IsSuspect)
         {

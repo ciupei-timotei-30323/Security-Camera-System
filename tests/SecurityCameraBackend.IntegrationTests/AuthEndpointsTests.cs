@@ -29,9 +29,11 @@ public sealed class AuthEndpointsTests(IntegrationTestFactory factory)
         Assert.False(string.IsNullOrWhiteSpace(login!.Token));
         Assert.Equal(DateTimeKind.Utc, login.ExpiresAtUtc.Kind);
         Assert.True(login.ExpiresAtUtc > DateTime.UtcNow);
+        Assert.NotNull(login.User.Id);
         Assert.True(login.User.Id > 0);
         Assert.Equal("admin", login.User.Username);
         Assert.Equal("Admin", login.User.Role);
+        Assert.Equal("sys-001", login.User.SystemId);
     }
 
     [Theory]
@@ -80,8 +82,9 @@ public sealed class AuthEndpointsTests(IntegrationTestFactory factory)
         Assert.Equal(login.User.Id, profile!.Id);
         Assert.Equal("admin", profile.Username);
         Assert.Equal("Admin", profile.Role);
-        Assert.NotEqual(default, profile.CreatedAtUtc);
+        Assert.NotNull(profile.CreatedAtUtc);
         Assert.True(profile.CreatedAtUtc <= DateTime.UtcNow);
+        Assert.Equal("sys-001", profile.SystemId);
     }
 
     [Fact]

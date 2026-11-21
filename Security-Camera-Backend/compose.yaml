@@ -7,12 +7,24 @@
     environment:
       DB_URL: ${DB_URL}
       PiAuth__ApiKey: ${PiAuth__ApiKey}
+      PiAuth__DefaultSystemId: ${PiAuth__DefaultSystemId:-sys-001}
+      PiAuth__Systems__sys-002: ${PiAuth__Systems__sys-002:-dev-only-api-key-sys-002}
       Storage__CapturesDirectory: /data/captures
       Storage__PublicRequestPath: /captures
       CvService__BaseUrl: http://cv-service:8000
       CvService__TimeoutSeconds: 10
       Admin__DeviceCode: ${Admin__DeviceCode}
       Jwt__Secret: ${Jwt__Secret}
+      # Factory-admin validation. Set UseStub=false and BaseUrl to the real IAM service later.
+      ExternalAuth__UseStub: ${ExternalAuth__UseStub:-true}
+      ExternalAuth__BaseUrl: ${ExternalAuth__BaseUrl:-http://external-auth:8080}
+      ExternalAuth__TimeoutSeconds: ${ExternalAuth__TimeoutSeconds:-10}
+      ExternalAuth__StubAccounts__cam_admin_1__SystemId: sys-001
+      ExternalAuth__StubAccounts__cam_admin_1__Password: ${ExternalAuth__StubAccounts__cam_admin_1__Password:-factory-pass-sys-001}
+      ExternalAuth__StubAccounts__cam_admin_1__PiApiKey: ${ExternalAuth__StubAccounts__cam_admin_1__PiApiKey:-dev-pi-key-sys-001}
+      ExternalAuth__StubAccounts__cam_admin_2__SystemId: sys-002
+      ExternalAuth__StubAccounts__cam_admin_2__Password: ${ExternalAuth__StubAccounts__cam_admin_2__Password:-factory-pass-sys-002}
+      ExternalAuth__StubAccounts__cam_admin_2__PiApiKey: ${ExternalAuth__StubAccounts__cam_admin_2__PiApiKey:-dev-pi-key-sys-002}
     ports:
       - "8080:8080"
     volumes:

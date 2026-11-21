@@ -1,9 +1,28 @@
 @Security_Camera_Backend_HostAddress = http://localhost:8080
 @ApiKey = dev-only-api-key
+@ApiKeySys002 = dev-only-api-key-sys-002
+@TokenSys001 = paste-token-from-cam_admin_1-login
+@TokenSys002 = paste-token-from-cam_admin_2-login
 
 ### Pi motion ingestion (multipart burst upload)
 POST {{Security_Camera_Backend_HostAddress}}/api/events
 X-Api-Key: {{ApiKey}}
+Content-Type: multipart/form-data; boundary=----boundary
+
+------boundary
+Content-Disposition: form-data; name="image"; filename="frame.jpg"
+Content-Type: image/jpeg
+
+< ./frame.jpg
+------boundary
+Content-Disposition: form-data; name="isOfflineSync"
+
+false
+------boundary--
+
+### Pi motion ingestion for the second camera system
+POST {{Security_Camera_Backend_HostAddress}}/api/events
+X-Api-Key: {{ApiKeySys002}}
 Content-Type: multipart/form-data; boundary=----boundary
 
 ------boundary
@@ -40,11 +59,88 @@ Content-Type: image/jpeg
 < ./frame.jpg
 ------boundary--
 
-### Admin login (initial password = physical device code / Admin__DeviceCode)
+### Built-in sys-001 admin login (initial password = physical device code / Admin__DeviceCode)
 POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
 Content-Type: application/json
 
 {
-  "username": "admi",
+  "username": "admin",
   "password": "CAM-0000-DEV1"
+}
+
+### Factory admin login for sys-001 (development stub)
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "cam_admin_1",
+  "password": "factory-pass-sys-001"
+}
+
+### Factory admin login for sys-002 (development stub)
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "cam_admin_2",
+  "password": "factory-pass-sys-002"
+}
+
+### Ambiguous sub-user login (same username in both systems)
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "alice-pass-1"
+}
+
+### Disambiguated sub-user login
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "alice-pass-1",
+  "systemId": "sys-001"
+}
+
+### Current identity (includes systemId)
+GET {{Security_Camera_Backend_HostAddress}}/api/auth/me
+Authorization: Bearer {{TokenSys001}}
+
+### Logout (revokes the token)
+POST {{Security_Camera_Backend_HostAddress}}/api/auth/logout
+Authorization: Bearer {{TokenSys001}}
+
+### Create a sub-user in the authenticated admin's system
+POST {{Security_Camera_Backend_HostAddress}}/api/users
+Authorization: Bearer {{TokenSys001}}
+Content-Type: application/json
+
+{
+  "username": "alice",
+  "password": "alice-pass-1",
+  "role": "User"
+}
+
+### List sub-users (only the admin's system)
+GET {{Security_Camera_Backend_HostAddress}}/api/users
+Authorization: Bearer {{TokenSys001}}
+
+### Entrance logs (only the authenticated user's system)
+GET {{Security_Camera_Backend_HostAddress}}/api/events?limit=100
+Authorization: Bearer {{TokenSys001}}
+
+### Read away-mode settings (row auto-created with isArmed = true)
+GET {{Security_Camera_Backend_HostAddress}}/api/away-mode-settings
+Authorization: Bearer {{TokenSys001}}
+
+### Update away-mode settings for the authenticated user's system
+PUT {{Security_Camera_Backend_HostAddress}}/api/away-mode-settings
+Authorization: Bearer {{TokenSys001}}
+Content-Type: application/json
+
+{
+  "isArmed": false
 }

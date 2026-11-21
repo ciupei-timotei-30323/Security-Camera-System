@@ -9,14 +9,17 @@ public sealed class EventIngestionService(
         IFormFile? image,
         DateTimeOffset? capturedAt,
         bool isOfflineSync,
+        string systemId,
         CancellationToken ct)
     {
         var rawImagePath = await captureStorage.SaveFrameAsync(image, ct);
 
-        logger.LogInformation("Saved motion frame to {RawImagePath}", rawImagePath);
+        logger.LogInformation(
+            "Saved motion frame for system {SystemId} to {RawImagePath}",
+            systemId, rawImagePath);
 
         var processingResult = await detectionProcessingService.ProcessCapturedImageAsync(
-            rawImagePath, capturedAt, isOfflineSync, ct);
+            rawImagePath, capturedAt, isOfflineSync, systemId, ct);
 
         return processingResult is { Persisted: true, DetectionEvent: not null }
             ? new EventIngestionResult(processingResult.DetectionEvent.Id, true)

@@ -31,6 +31,11 @@ public sealed class GlobalExceptionHandler(
         // problemDetails.Extensions["traceID"] = httpContext.TraceIdentifier;
         problemDetails.Extensions["TimeUTC"] = DateTime.UtcNow;
 
+        if (exception is AppException { ErrorCode: not null } codedException)
+        {
+            problemDetails.Extensions["code"] = codedException.ErrorCode;
+        }
+
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext()
         {
             HttpContext = httpContext,

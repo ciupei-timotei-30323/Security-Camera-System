@@ -1,10 +1,18 @@
+using Security_Camera_Backend.Services.Settings;
+
 namespace Security_Camera_Backend.Services;
 
 /// <summary>
-/// Default placeholder implementation: the system is always armed.
-/// Replace with a database-backed implementation without touching the ingestion service.
+/// Database-backed arm/disarm state. A missing <see cref="Models.AwayModeSetting"/> row is
+/// created lazily as armed, so newly registered systems default to the historic behaviour.
 /// </summary>
-public sealed class SystemStateService : ISystemStateService
+public sealed class SystemStateService(IAwayModeSettingsService awayModeSettingsService)
+    : ISystemStateService
 {
-    public Task<bool> IsArmedAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public async Task<bool> IsArmedAsync(string systemId, CancellationToken ct = default)
+    {
+        var setting = await awayModeSettingsService.GetOrCreateAsync(systemId, ct);
+
+        return setting.IsArmed;
+    }
 }
