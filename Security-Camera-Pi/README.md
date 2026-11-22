@@ -8,9 +8,10 @@ The daemon is deliberately stateless apart from `offline_queue/`:
 
 ```
 Picamera2
-  ├─ lores frames ──> grayscale motion detector ──> full-res JPEG ──> POST /api/events
-  │                                                   └─ transient failure ──> offline queue
-  └─ lores frames ──> 640x360 JPEG q60 ──> POST /api/camera/frame (best effort)
+  ├─ main RGB888 1920x1080 ──> JPEG q90 ──> POST /api/events
+  │                                  └─ transient failure ──> offline queue
+  ├─ main RGB888 1920x1080 ──> resize 640x360 ──> JPEG q60 ──> POST /api/camera/frame
+  └─ lores YUV420 640x360 ──> Y plane only ──> grayscale motion detector
 ```
 
 ## Requirements
@@ -59,6 +60,27 @@ Copy `.env.example` to `.env` and edit it:
 distant motion. The daemon uses a 1920x1080 full-resolution still and a 640x360 lores stream by
 default.
 
+## Camera streams and JPEG encoding
+
+Picamera2 is configured with two streams:
+
+| Stream | Size | Format | Used for |
+|---|---|---|---|
+| `main` | 1920x1080 | `RGB888` | Event stills and, downscaled, the live preview |
+| `lores` | 640x360 | `YUV420` | Motion detection only |
+
+Picamera2's `RGB888` buffers are BGR-ordered in memory, which is the channel order OpenCV expects,
+so main-stream frames pass straight through to JPEG encoding. `lores` is used only for motion:
+the first 360 rows of the I420 buffer are the Y/luma plane, and that 360x640 slice is passed to
+the motion detector. Chroma rows are never treated as image data.
+
+All JPEGs go through the shared `frame_to_jpeg(frame, fmt, quality, expected_size=...)` helper in
+`frames.py`. It validates the declared format, dtype and exact `(width, height)`, converts I420
+with `cv2.COLOR_YUV2BGR_I420`, and raises `FrameFormatError` if a planar buffer is passed as BGR.
+The preview is produced by capturing `main`, validating it, resizing to 640x360, and encoding at
+quality 60. This prevents a raw I420 buffer from ever being JPEG-encoded as a single-channel
+image.
+
 ## Run
 
 ```bash
@@ -93,7 +115,8 @@ A `200`/`201` means success. Network errors, timeouts, `429` and `5xx` responses
 Other `4xx` responses are permanent and are logged without queueing.
 
 The preview thread sends a raw JPEG body (`Content-Type: image/jpeg`) to
-`POST /api/camera/frame`; it does not use multipart. Preview failures are intentionally silent at
+`POST /api/camera/frame`; it does not use multipart. The preview is a colour 640x360 JPEG
+(q60) downscaled from the validated `main` stream. Preview failures are intentionally silent at
 normal log levels.
 
 ## Offline queue
@@ -162,4 +185,6 @@ python -m pytest
 
 Covered cases include JPEG/sidecar creation, 200/201 deletion, 5xx and 429 retries, permanent 4xx
 rejection, oldest-first ordering, size-limit eviction, backoff caps and the real background retry
-thread.
+thread. Frame tests cover I420 and BGR/RGB888 encoding with known red/blue colours, exact decoded
+dimensions, rejection of planar I420 passed as BGR, Y-plane-only motion extraction, and the
+camera preview/still/motion paths.

@@ -7,6 +7,8 @@ import threading
 import cv2
 import numpy as np
 
+from .frames import frame_to_bgr, frame_to_jpeg, i420_y_plane
+
 FULL_WIDTH = 1920
 FULL_HEIGHT = 1080
 PREVIEW_WIDTH = 640
@@ -22,9 +24,16 @@ class CameraError(RuntimeError):
 class Camera:
     """Owns a Picamera2 instance and serializes access to it.
 
+    Stream formats:
+    - ``main``: 1920x1080 RGB888. Picamera2 stores RGB888 in BGR byte order,
+      which is exactly what OpenCV expects for JPEG encoding. Used for stills
+      and, downscaled, for the live preview.
+    - ``lores``: 640x360 YUV420. Used only for motion detection, where the
+      first ``height`` rows are the Y/luma plane.
+
     The preview and motion loops run in different threads. Picamera2's capture
     API is not safe to drive concurrently, so every capture is protected by one
-    lock. Encoding happens outside the lock to keep the critical section short.
+    lock. Encoding and resizing happen outside the lock.
     """
 
     def __init__(
@@ -68,61 +77,29 @@ class Camera:
     def capture_motion_gray(self) -> np.ndarray:
         with self._lock:
             frame = self._picam2.capture_array("lores")
-        return self._lores_to_gray(frame)
+        return i420_y_plane(frame, self._preview_size)
 
     def capture_preview_jpeg(self, quality: int = PREVIEW_JPEG_QUALITY) -> bytes:
         with self._lock:
-            frame = self._picam2.capture_array("lores")
-        bgr = self._lores_to_bgr(frame)
-        return _encode_jpeg(bgr, quality)
+            frame = self._picam2.capture_array("main")
+        # Validate before resize so a wrong/misordered buffer raises a clear
+        # FrameFormatError rather than being resized into another bad frame.
+        frame_to_bgr(frame, "BGR", expected_size=self._full_size)
+        width, height = self._preview_size
+        preview = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+        return frame_to_jpeg(
+            preview,
+            "BGR",
+            quality,
+            expected_size=self._preview_size,
+        )
 
     def capture_still_jpeg(self, quality: int = STILL_JPEG_QUALITY) -> bytes:
         with self._lock:
             frame = self._picam2.capture_array("main")
-        bgr = _main_to_bgr(frame)
-        return _encode_jpeg(bgr, quality)
-
-    def _lores_to_gray(self, frame: np.ndarray) -> np.ndarray:
-        height, width = self._preview_size
-        if frame.ndim == 2 and frame.shape[0] == height * 3 // 2:
-            return cv2.cvtColor(frame, cv2.COLOR_YUV2GRAY_I420)
-        if frame.ndim == 2:
-            return frame
-        if frame.ndim == 3 and frame.shape[2] == 4:
-            return cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY)
-        if frame.ndim == 3 and frame.shape[2] == 3:
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        raise CameraError(f"unsupported lores frame shape: {frame.shape}")
-
-    def _lores_to_bgr(self, frame: np.ndarray) -> np.ndarray:
-        height, width = self._preview_size
-        if frame.ndim == 2 and frame.shape[0] == height * 3 // 2:
-            return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
-        if frame.ndim == 2:
-            return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-        if frame.ndim == 3 and frame.shape[2] == 4:
-            return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-        if frame.ndim == 3 and frame.shape[2] == 3:
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        raise CameraError(f"unsupported lores frame shape: {frame.shape}")
-
-
-def _main_to_bgr(frame: np.ndarray) -> np.ndarray:
-    if frame.ndim == 2:
-        return cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-    if frame.ndim == 3 and frame.shape[2] == 4:
-        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    if frame.ndim == 3 and frame.shape[2] == 3:
-        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-    raise CameraError(f"unsupported main frame shape: {frame.shape}")
-
-
-def _encode_jpeg(bgr: np.ndarray, quality: int) -> bytes:
-    ok, encoded = cv2.imencode(
-        ".jpg",
-        bgr,
-        [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],
-    )
-    if not ok:
-        raise CameraError("JPEG encoding failed")
-    return encoded.tobytes()
+        return frame_to_jpeg(
+            frame,
+            "BGR",
+            quality,
+            expected_size=self._full_size,
+        )
