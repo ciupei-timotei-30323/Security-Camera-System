@@ -212,9 +212,14 @@ Set `ExternalAuth:UseStub=false` and `ExternalAuth:BaseUrl` to the real service.
 ```
 POST {ExternalAuth:BaseUrl}/api/internal/validate-admin
 Content-Type: application/json
+X-Internal-Secret: <ExternalAuth:InternalSecret>
 
 { "username": "cam_admin_1", "password": "..." }
 ```
+
+The local Neon-backed implementation lives in [`external-auth-service/`](external-auth-service/).
+It exposes `GET /health` and the validation endpoint above; the validation endpoint returns
+`403` when `INTERNAL_API_SECRET` is configured and the header is missing or wrong.
 
 Expected responses:
 
@@ -222,15 +227,16 @@ Expected responses:
 
   ```json
   {
-    "system_id": "sys-001",
+    "systemId": "sys-001",
     "username": "cam_admin_1",
-    "pi_api_key": "optional-camera-kit-api-key"
+    "piApiKey": "optional-camera-kit-api-key"
   }
   ```
 
-  `systemId`, `username` and `piApiKey` camelCase spellings are also accepted. `pi_api_key` is
-  optional; when present its SHA-256 hash is stored in `PiDevices` so the camera kit can ingest
-  frames as that system.
+  `systemId`, `username` and `piApiKey` camelCase spellings are accepted; the backend also
+  accepts the legacy `system_id` and `pi_api_key` snake_case spellings. `piApiKey` is optional;
+  when present its SHA-256 hash is stored in `PiDevices` so the camera kit can ingest frames as
+  that system.
 - `401 Unauthorized` or `404 Not Found` — invalid credentials. The backend then tries the local
   `Users` table (sub-user fallback).
 - Any other status — treated as an outage and surfaced as a server error; there is no insecure
@@ -238,10 +244,13 @@ Expected responses:
 
 ### Configuration
 
-| Setting | Development value | Purpose |
+| Setting | Compose/default value | Purpose |
 |---|---|---|
-| `ExternalAuth__UseStub` | `true` | Uses `StubAccounts` instead of HTTP |
-| `ExternalAuth__BaseUrl` | `http://external-auth:8080` | Future IAM service base URL |
+| `ExternalAuth__UseStub` | `false` in `compose.yaml`, `true` in Development | Uses `StubAccounts` instead of HTTP |
+| `ExternalAuth__BaseUrl` | `http://external-auth-service:3001` | External IAM service base URL |
+| `ExternalAuth__InternalSecret` | `${INTERNAL_API_SECRET}` | Shared `X-Internal-Secret` header value |
+| `NEON_DB_URL` | Neon connection string | Database URL passed to the external service |
+| `INTERNAL_API_SECRET` | long random value | Header secret shared by backend and external service |
 | `ExternalAuth__StubAccounts__cam_admin_1__SystemId` | `sys-001` | Stub account tenant |
 | `ExternalAuth__StubAccounts__cam_admin_1__Password` | `factory-pass-sys-001` | Stub password |
 | `ExternalAuth__StubAccounts__cam_admin_1__PiApiKey` | `dev-pi-key-sys-001` | Optional kit key |
@@ -258,13 +267,42 @@ Expected responses:
 | `Alarm__DurationSeconds` | `15` | Terminal alarm window after a suspect event |
 
 `appsettings.Development.json`, `compose.yaml` and `.env.example` contain the two sample factory
-kits (`cam_admin_1` → `sys-001`, `cam_admin_2` → `sys-002`). Never use the sample passwords in
-production.
+kits (`cam_admin_1` → `sys-001`, `cam_admin_2` → `sys-002`). The external service seeds the same
+defaults into Neon. Never use the sample passwords in production.
+
+### Running the external auth service locally
+
+1. Set `NEON_DB_URL` and a shared `INTERNAL_API_SECRET` in `Security-Camera-Backend/.env` (used by
+   Compose), and `DATABASE_URL` + the same `INTERNAL_API_SECRET` in
+   `external-auth-service/.env` (used by the seed script and direct Node runs).
+2. Create the `factory_kits` table and upsert the sample kits:
+
+   ```bash
+   cd external-auth-service
+   npm install
+   npm run seed
+   ```
+
+3. Start the stack:
+
+   ```bash
+   cd Security-Camera-Backend
+   docker compose up --build
+   ```
+
+   The backend waits for the `external-auth-service` healthcheck and calls it at
+   `http://external-auth-service:3001`. The service is otherwise internal to the Compose bridge
+   network; `127.0.0.1:3001` is published only for local debugging.
+
+For manual Cloudflare Workers deployment later, see
+[`external-auth-service/README.md`](external-auth-service/README.md). No deployment is performed
+by the local setup.
 
 ## Testing two camera systems locally
 
-With the development profile (`ExternalAuth:UseStub=true`) both factory admins are available
-without the external service.
+With the Compose stack (`ExternalAuth:UseStub=false`), both factory admins are validated by the
+Neon-backed external service using the seeded sample kits. With a direct `dotnet run` in the
+Development profile (`ExternalAuth:UseStub=true`), they are validated by the local stub.
 
 1. Log in as the two administrators:
 

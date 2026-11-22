@@ -28,10 +28,11 @@ services:
       Smtp__FromAddress: ${Smtp__FromAddress:-alerts@security-camera.local}
       Smtp__FromName: ${Smtp__FromName:-Security Camera}
       Alarm__DurationSeconds: ${Alarm__DurationSeconds:-15}
-      # Factory-admin validation. Set UseStub=false and BaseUrl to the real IAM service later.
-      ExternalAuth__UseStub: ${ExternalAuth__UseStub:-true}
-      ExternalAuth__BaseUrl: ${ExternalAuth__BaseUrl:-http://external-auth:8080}
+      # Factory-admin validation through the local external-auth-service (Neon-backed).
+      ExternalAuth__UseStub: "false"
+      ExternalAuth__BaseUrl: http://external-auth-service:3001
       ExternalAuth__TimeoutSeconds: ${ExternalAuth__TimeoutSeconds:-10}
+      ExternalAuth__InternalSecret: ${INTERNAL_API_SECRET}
       ExternalAuth__StubAccounts__cam_admin_1__SystemId: sys-001
       ExternalAuth__StubAccounts__cam_admin_1__Password: ${ExternalAuth__StubAccounts__cam_admin_1__Password:-factory-pass-sys-001}
       ExternalAuth__StubAccounts__cam_admin_1__PiApiKey: ${ExternalAuth__StubAccounts__cam_admin_1__PiApiKey:-dev-pi-key-sys-001}
@@ -45,6 +46,8 @@ services:
       - captures:/data/captures
     depends_on:
       cv-service:
+        condition: service_healthy
+      external-auth-service:
         condition: service_healthy
       mailpit:
         condition: service_started
@@ -67,6 +70,27 @@ services:
     depends_on:
       security-camera-backend:
         condition: service_started
+    restart: unless-stopped
+
+
+  external-auth-service:
+    image: security-camera-external-auth
+    build:
+      context: ../external-auth-service
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: ${NEON_DB_URL}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      PORT: 3001
+    # Internal to the compose bridge network. Host binding is for local debugging only.
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
 

@@ -1,0 +1,31 @@
+{
+  "name": "security-camera-external-auth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Factory camera-kit admin credential validation for the Security Camera backend.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/node.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/node.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "@neondatabase/serverless": "^1.2.1",
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.13.19"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.166.0"
+  }
+}

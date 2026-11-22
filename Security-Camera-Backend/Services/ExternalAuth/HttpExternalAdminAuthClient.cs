@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
+using Security_Camera_Backend.Configuration;
 
 namespace Security_Camera_Backend.Services.ExternalAuth;
 
@@ -10,6 +12,7 @@ namespace Security_Camera_Backend.Services.ExternalAuth;
 /// </summary>
 public sealed class HttpExternalAdminAuthClient(
     IHttpClientFactory httpClientFactory,
+    IOptions<ExternalAuthOptions> options,
     ILogger<HttpExternalAdminAuthClient> logger) : IExternalAdminAuthClient
 {
     public const string HttpClientName = "ExternalAdminAuth";
@@ -23,10 +26,20 @@ public sealed class HttpExternalAdminAuthClient(
     {
         var client = httpClientFactory.CreateClient(HttpClientName);
 
-        using var response = await client.PostAsJsonAsync(
-            "/api/internal/validate-admin",
-            new ValidateAdminRequest(username, password),
-            ct);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/api/internal/validate-admin")
+        {
+            Content = JsonContent.Create(new ValidateAdminRequest(username, password))
+        };
+
+        var internalSecret = options.Value.InternalSecret;
+        if (!string.IsNullOrWhiteSpace(internalSecret))
+        {
+            request.Headers.TryAddWithoutValidation("X-Internal-Secret", internalSecret);
+        }
+
+        using var response = await client.SendAsync(request, ct);
 
         if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.NotFound)
         {

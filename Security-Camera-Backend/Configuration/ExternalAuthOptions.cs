@@ -5,7 +5,7 @@ namespace Security_Camera_Backend.Configuration;
 /// external factory IAM service; in development <see cref="UseStub"/> makes the API validate
 /// against <see cref="StubAccounts"/> instead.
 /// Bound from <c>ExternalAuth</c> (env vars: <c>ExternalAuth__UseStub</c>,
-/// <c>ExternalAuth__BaseUrl</c>, <c>ExternalAuth__TimeoutSeconds</c>).
+/// <c>ExternalAuth__BaseUrl</c>, <c>ExternalAuth__TimeoutSeconds</c>, <c>ExternalAuth__InternalSecret</c>).
 /// </summary>
 public sealed class ExternalAuthOptions
 {
@@ -17,9 +17,15 @@ public sealed class ExternalAuthOptions
     /// </summary>
     public bool UseStub { get; set; }
 
-    public string BaseUrl { get; set; } = "http://external-auth:8080";
+    public string BaseUrl { get; set; } = "http://external-auth-service:3001";
 
     public int TimeoutSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// Shared secret sent as <c>X-Internal-Secret</c> to the external factory service. Required by
+    /// the service when it has <c>INTERNAL_API_SECRET</c> configured. Never logged.
+    /// </summary>
+    public string InternalSecret { get; set; } = string.Empty;
 
     /// <summary>Mock factory camera kits used by the stub. Key is the administrator username.</summary>
     public Dictionary<string, StubExternalAdminAccount> StubAccounts { get; set; } = new();

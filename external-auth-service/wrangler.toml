@@ -1,0 +1,7 @@
+name = "security-camera-external-auth"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# Secrets are intentionally not stored here. Set them with:
+#   wrangler secret put DATABASE_URL
+#   wrangler secret put INTERNAL_API_SECRET
