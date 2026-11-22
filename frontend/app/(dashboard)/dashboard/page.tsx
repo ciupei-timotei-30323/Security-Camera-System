@@ -6,11 +6,9 @@ import { EntranceLog } from "@/components/entrance-log";
 import { LiveFeed } from "@/components/live-feed";
 import { StatusPanel } from "@/components/status-panel";
 import { Badge } from "@/components/ui/badge";
-import { useSystemStatus } from "@/lib/queries";
 
 export default function DashboardPage() {
   const user = useCurrentUser();
-  const statusQuery = useSystemStatus();
 
   return (
     <div className="flex flex-col gap-6">
@@ -33,7 +31,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
-        <LiveFeed cameraOnline={statusQuery.data?.camera.online} />
+        <LiveFeed />
         <StatusPanel />
       </div>
 

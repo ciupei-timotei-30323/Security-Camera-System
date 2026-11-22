@@ -58,6 +58,7 @@ export function useLatestFrame(enabled: boolean) {
     queryFn: () => apiBlob("/api/camera/latest"),
     enabled,
     refetchInterval: enabled ? 1_000 : false,
+    refetchIntervalInBackground: false,
     retry: false,
     staleTime: 0,
   });

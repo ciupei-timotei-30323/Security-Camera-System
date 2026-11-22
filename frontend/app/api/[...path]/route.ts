@@ -150,6 +150,22 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
     return loginResponse(request, true);
   }
 
+  // The incoming request signal is passed to the upstream fetch above. Also cancel the
+  // upstream body explicitly when the browser disconnects so streamed MJPEG connections
+  // release the backend's concurrent-stream slot immediately.
+  if (request.signal.aborted) {
+    await upstream.body?.cancel().catch(() => undefined);
+    return new Response(null, { status: 499 });
+  }
+
+  request.signal.addEventListener(
+    "abort",
+    () => {
+      void upstream.body?.cancel().catch(() => undefined);
+    },
+    { once: true },
+  );
+
   const responseHeaders = new Headers();
 
   for (const name of RESPONSE_HEADERS) {

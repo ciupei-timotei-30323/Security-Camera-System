@@ -5,81 +5,123 @@
 import {
   CameraOffIcon,
   Loader2Icon,
+  PauseCircleIcon,
+  PlayIcon,
   RefreshCwIcon,
+  SquareIcon,
   VideoIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useLatestFrame } from "@/lib/queries";
+import {
+  isLiveFeedLive,
+  isLiveFeedPaused,
+  LiveFeedController,
+  type LiveFeedState,
+} from "@/lib/live-feed-controller";
 import { cn } from "@/lib/utils";
 
-type FeedMode = "stream" | "poll";
+const clockFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
 
-export function LiveFeed({ cameraOnline }: { cameraOnline?: boolean }) {
-  const [mode, setMode] = useState<FeedMode>("stream");
-  const [streamNonce, setStreamNonce] = useState(0);
-  const [streamLive, setStreamLive] = useState(false);
-  const [streamNotice, setStreamNotice] = useState<string | null>(null);
-  const wasOnline = useRef<boolean | undefined>(cameraOnline);
+function formatSnapshotTime(timestamp: number): string {
+  return clockFormatter.format(new Date(timestamp));
+}
 
-  const latestQuery = useLatestFrame(mode === "poll" && cameraOnline !== false);
-  const snapshotUrl = useMemo(
-    () => (latestQuery.data ? URL.createObjectURL(latestQuery.data) : null),
-    [latestQuery.data],
+function feedLabel(state: LiveFeedState): {
+  label: string;
+  tone: "live" | "offline" | "loading" | "idle" | "paused";
+} {
+  if (isLiveFeedPaused(state)) {
+    return { label: "Paused", tone: "paused" };
+  }
+
+  if (state.status === "live" || state.status === "live-fallback") {
+    return { label: "LIVE", tone: "live" };
+  }
+
+  if (state.status === "live-connecting") {
+    return { label: "Connecting", tone: "loading" };
+  }
+
+  if (state.status === "offline" && !state.snapshotUrl) {
+    return { label: "Camera offline", tone: "offline" };
+  }
+
+  if (state.status === "snapshot-loading") {
+    return { label: "Loading", tone: "loading" };
+  }
+
+  return { label: "Snapshot", tone: state.snapshotUrl ? "idle" : "offline" };
+}
+
+async function captureElementFrame(image: HTMLImageElement | null): Promise<Blob | null> {
+  if (!image || !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0) {
+    return null;
+  }
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return null;
+    }
+
+    context.drawImage(image, 0, 0);
+
+    return await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.9);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export function LiveFeed() {
+  const streamImageRef = useRef<HTMLImageElement | null>(null);
+  const [controller] = useState(() => new LiveFeedController());
+  const state = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
   );
 
   useEffect(() => {
-    return () => {
-      if (snapshotUrl) {
-        URL.revokeObjectURL(snapshotUrl);
-      }
+    const handleVisibilityChange = () => {
+      controller.handleVisibilityChange(document.visibilityState === "hidden");
     };
-  }, [snapshotUrl]);
 
-  // A multipart <img> can stay connected without ever delivering a frame. If that happens,
-  // fall back to the 1 Hz /api/camera/latest snapshot endpoint.
-  useEffect(() => {
-    if (mode !== "stream" || cameraOnline === false) {
-      return;
-    }
+    controller.setCaptureFrame(() => captureElementFrame(streamImageRef.current));
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    controller.start();
 
-    const timer = window.setTimeout(() => {
-      if (!streamLive) {
-        setMode("poll");
-        setStreamNotice("Live stream did not start; showing snapshots instead.");
-      }
-    }, 8000);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      controller.dispose();
+    };
+  }, [controller]);
 
-    return () => window.clearTimeout(timer);
-  }, [mode, streamNonce, streamLive, cameraOnline]);
-
-  // Retry MJPEG when the camera comes back after being offline.
-  useEffect(() => {
-    if (cameraOnline && wasOnline.current === false) {
-      setMode("stream");
-      setStreamNonce((nonce) => nonce + 1);
-      setStreamLive(false);
-      setStreamNotice(null);
-    }
-
-    wasOnline.current = cameraOnline;
-  }, [cameraOnline]);
-
-  function retryStream() {
-    setMode("stream");
-    setStreamNonce((nonce) => nonce + 1);
-    setStreamLive(false);
-    setStreamNotice(null);
-  }
-
-  const showStream = mode === "stream" && cameraOnline !== false;
-  const showSnapshot = mode === "poll" && cameraOnline !== false && Boolean(snapshotUrl);
-  const hasFrame = cameraOnline !== false && (showStream ? streamLive : Boolean(snapshotUrl));
-  const cameraOffline = cameraOnline === false;
-  const frameError = latestQuery.isError;
+  const live = isLiveFeedLive(state);
+  const paused = isLiveFeedPaused(state);
+  const showStream = live && state.streamArmed;
+  const showSnapshot = Boolean(state.snapshotUrl);
+  const badge = feedLabel(state);
+  const snapshotLoading = state.snapshotLoading;
+  const firstFramePending = state.status === "live-connecting";
+  const snapshotPending = state.status === "snapshot-loading" && !showSnapshot;
+  const offline = state.status === "offline" && !showSnapshot;
+  const noFrame = !showSnapshot && !showStream && !snapshotPending && !offline;
 
   return (
     <Card className="overflow-hidden">
@@ -93,103 +135,205 @@ export function LiveFeed({ cameraOnline }: { cameraOnline?: boolean }) {
             variant="outline"
             className={cn(
               "gap-1.5 font-normal",
-              hasFrame && "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-              cameraOffline && "border-destructive/30 bg-destructive/10 text-destructive",
+              badge.tone === "live" &&
+                "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+              badge.tone === "offline" &&
+                "border-destructive/30 bg-destructive/10 text-destructive",
+              badge.tone === "paused" &&
+                "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
             )}
           >
             <span
               className={cn(
                 "size-1.5 rounded-full",
-                hasFrame && "animate-pulse bg-emerald-500",
-                cameraOffline && "bg-destructive",
-                !hasFrame && !cameraOffline && "bg-muted-foreground",
+                badge.tone === "live" && "animate-pulse bg-emerald-500",
+                badge.tone === "offline" && "bg-destructive",
+                badge.tone === "paused" && "bg-amber-500",
+                (badge.tone === "idle" || badge.tone === "loading") &&
+                  "bg-muted-foreground",
               )}
             />
-            {cameraOffline ? "Camera offline" : hasFrame ? (mode === "poll" ? "Snapshot" : "Live") : "Connecting"}
+            {badge.label}
           </Badge>
         </CardTitle>
         <CardDescription>
-          MJPEG stream with automatic snapshot fallback.
+          Snapshots by default. Start the live feed when you need it.
         </CardDescription>
       </CardHeader>
 
       <CardContent className="px-0 pb-0 sm:px-0">
-        <div className="relative aspect-video w-full overflow-hidden bg-zinc-950">
+        <div
+          className="relative aspect-video w-full overflow-hidden bg-zinc-950"
+          aria-busy={snapshotLoading || firstFramePending}
+        >
+          {showSnapshot && (
+            <img
+              src={state.snapshotUrl ?? undefined}
+              alt="Latest camera snapshot"
+              className="absolute inset-0 h-full w-full object-contain"
+            />
+          )}
+
           {showStream && (
             <img
-              key={streamNonce}
+              ref={streamImageRef}
+              key={state.streamKey}
               src="/api/camera/stream"
               alt="Live camera feed"
               className={cn(
-                "h-full w-full object-contain transition-opacity duration-300",
-                streamLive ? "opacity-100" : "opacity-0",
+                "absolute inset-0 h-full w-full object-contain transition-opacity duration-300",
+                state.status === "live" ? "opacity-100" : "opacity-0",
               )}
-              onLoad={() => setStreamLive(true)}
-              onError={() => {
-                setMode("poll");
-                setStreamNotice("Live stream unavailable; showing snapshots instead.");
-              }}
+              onLoad={() => controller.handleStreamFrame()}
+              onError={() => controller.handleStreamError()}
             />
           )}
 
-          {showSnapshot && (
-            <img
-              src={snapshotUrl ?? undefined}
-              alt="Latest camera snapshot"
-              className="h-full w-full object-contain"
-            />
-          )}
-
-          {!hasFrame && !cameraOffline && !frameError && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-300">
-              <Loader2Icon className="size-6 animate-spin" />
-              <span className="text-sm">Waiting for a camera frame…</span>
-              <span className="text-xs text-zinc-500">
-                {mode === "poll" ? "Polling every second" : "Connecting to MJPEG"}
+          {(snapshotPending || firstFramePending) && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-zinc-950/40 px-6 text-center text-zinc-200">
+              <Loader2Icon className="size-6 animate-spin" aria-hidden="true" />
+              <span className="text-sm">
+                {firstFramePending ? "Waiting for the first live frame…" : "Loading snapshot…"}
               </span>
             </div>
           )}
 
-          {cameraOffline && (
+          {offline && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center text-zinc-300">
+              <WifiOffIcon className="size-8 text-zinc-500" aria-hidden="true" />
+              <div className="flex flex-col gap-1">
+                <span className="text-base font-medium">Camera offline</span>
+                <span className="max-w-xs text-xs text-zinc-500">
+                  No frame was available from the camera.
+                </span>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => controller.refreshSnapshot()}
+                disabled={snapshotLoading}
+              >
+                <RefreshCwIcon className={cn(snapshotLoading && "animate-spin")} />
+                Try again
+              </Button>
+            </div>
+          )}
+
+          {noFrame && !live && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-zinc-300">
-              <WifiOffIcon className="size-8 text-zinc-500" />
+              <CameraOffIcon className="size-8 text-zinc-500" aria-hidden="true" />
+              <span className="text-base font-medium">No frame available</span>
+            </div>
+          )}
+
+          {state.status === "live-fallback" && !showSnapshot && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-zinc-300">
+              <CameraOffIcon className="size-8 text-zinc-500" aria-hidden="true" />
               <span className="text-base font-medium">Camera offline</span>
               <span className="max-w-xs text-xs text-zinc-500">
-                The Raspberry Pi has not sent a frame recently. The feed reconnects
-                automatically when it comes back.
+                Waiting for the next snapshot.
               </span>
             </div>
           )}
 
-          {frameError && !cameraOffline && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center text-zinc-300">
-              <CameraOffIcon className="size-8 text-zinc-500" />
-              <span className="text-base font-medium">Live view unavailable</span>
-              <span className="max-w-xs text-xs text-zinc-500">
-                The backend could not return the latest frame. Retrying automatically.
+          {paused && (
+            <div
+              className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-2 bg-zinc-950/85 px-4 py-3 text-zinc-100 backdrop-blur"
+              role="status"
+            >
+              <span className="flex items-center gap-2 text-sm">
+                <PauseCircleIcon className="size-4 text-amber-400" aria-hidden="true" />
+                Live feed paused to save bandwidth
               </span>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void controller.startLive()}
+                disabled={snapshotLoading}
+              >
+                <PlayIcon />
+                Resume
+              </Button>
             </div>
           )}
         </div>
+
+        {!live && state.snapshotTakenAt !== null && (
+          <p className="px-4 pt-3 text-xs text-muted-foreground">
+            Snapshot taken at {formatSnapshotTime(state.snapshotTakenAt)}
+          </p>
+        )}
       </CardContent>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3 text-xs text-muted-foreground">
-        <span>
-          {mode === "stream"
-            ? "MJPEG · low latency"
-            : snapshotUrl
-              ? "Snapshots · 1 s poll"
-              : "Snapshots · waiting for frame"}
-        </span>
-        <div className="flex items-center gap-2">
-          {streamNotice && <span className="text-amber-600 dark:text-amber-400">{streamNotice}</span>}
-          {latestQuery.isFetching && mode === "poll" && (
-            <RefreshCwIcon className="size-3.5 animate-spin" />
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-3">
+        <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+          <span>
+            {paused
+              ? "Snapshot mode · live feed paused"
+              : live
+                ? state.status === "live-fallback"
+                  ? "Snapshot fallback · 1 s poll while live"
+                  : "MJPEG · low latency"
+                : state.status === "offline"
+                  ? "Snapshot mode · camera offline"
+                  : "Snapshot mode · one request per refresh"}
+          </span>
+          {state.message && (
+            <span
+              className={cn(
+                "text-amber-700 dark:text-amber-400",
+                state.status === "live-fallback" && "text-muted-foreground",
+              )}
+              role="status"
+            >
+              {state.message}
+            </span>
           )}
-          <Button variant="outline" size="sm" onClick={retryStream}>
-            <RefreshCwIcon />
-            Retry live
-          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {paused ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => controller.refreshSnapshot()}
+              disabled={snapshotLoading}
+            >
+              <RefreshCwIcon className={cn(snapshotLoading && "animate-spin")} />
+              Refresh snapshot
+            </Button>
+          ) : live ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => controller.stopLive("user")}
+            >
+              <SquareIcon />
+              Stop
+            </Button>
+          ) : (
+            <>
+              {state.status !== "offline" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => controller.refreshSnapshot()}
+                  disabled={snapshotLoading}
+                >
+                  <RefreshCwIcon className={cn(snapshotLoading && "animate-spin")} />
+                  Refresh snapshot
+                </Button>
+              )}
+              <Button type="button" size="sm" onClick={() => void controller.startLive()}>
+                <VideoIcon />
+                Watch live feed
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </Card>
