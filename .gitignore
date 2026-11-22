@@ -1,9 +1,14 @@
+# Environment files may contain secrets: ignore every .env in every directory, anywhere in the
+# repo, while keeping the committed examples.
+.env
+.env.*
+!.env.example
+!**/.env.example
+
 /Security-Camera-Backend/bin/
 /Security-Camera-Backend/obj/
 /Security-Camera-Backend/.idea/
-/Security-Camera-Backend/.env
 /Security-Camera-Backend/data/
-/Security-Camera-Pi/.env
 /Security-Camera-Pi/.venv/
 /Security-Camera-Pi/offline_queue/
 /Security-Camera-Pi/**/__pycache__/

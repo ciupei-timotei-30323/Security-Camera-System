@@ -120,8 +120,12 @@ export function isSameOrigin(request: Request): boolean {
     return true;
   }
 
+  // `request.url` uses the standalone server's bind host (0.0.0.0 in Docker), not the
+  // browser-facing host. The Host header is the origin the browser actually requested.
+  const requestHost = request.headers.get("host") ?? new URL(request.url).host;
+
   try {
-    return new URL(origin).host === new URL(request.url).host;
+    return new URL(origin).host === requestHost;
   } catch {
     return false;
   }

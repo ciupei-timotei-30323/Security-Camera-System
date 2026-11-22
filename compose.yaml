@@ -1,8 +1,12 @@
+# Compose project name kept from the previous Security-Camera-Backend/compose.yaml location so
+# existing containers and `docker compose down` keep working after the move.
+name: security-camera-backend
+
 services:
   security-camera-backend:
     image: security-camera-backend
     build:
-      context: .
+      context: ./Security-Camera-Backend
       dockerfile: Dockerfile
     environment:
       DB_URL: ${DB_URL}
@@ -57,7 +61,7 @@ services:
   dashboard:
     image: security-camera-dashboard
     build:
-      context: ../frontend
+      context: ./frontend
       dockerfile: Dockerfile
     environment:
       # Server-side BFF target. The browser only talks to the dashboard origin.
@@ -76,7 +80,7 @@ services:
   external-auth-service:
     image: security-camera-external-auth
     build:
-      context: ../external-auth-service
+      context: ./external-auth-service
       dockerfile: Dockerfile
     environment:
       DATABASE_URL: ${NEON_DB_URL}
@@ -105,7 +109,7 @@ services:
   cv-service:
     image: security-camera-cv-service
     build:
-      context: ./cv-service
+      context: ./Security-Camera-Backend/cv-service
       dockerfile: Dockerfile
     volumes:
       # Must match the exact mount path (/data/captures) used by the backend

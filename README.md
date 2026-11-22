@@ -20,8 +20,14 @@ npm install
 npm run dev                  # http://localhost:3000
 ```
 
-`Security-Camera-Backend/compose.yaml` also defines a `dashboard` service on port `3000`
+The root `compose.yaml` also defines a `dashboard` service on port `3000`
 with `BACKEND_URL=http://security-camera-backend:8080`.
+
+Sign in with one of the seeded factory administrators from the `external-auth-service` seed:
+`cam_admin_1` / `factory-pass-sys-001` (system `sys-001`) or `cam_admin_2` /
+`factory-pass-sys-002` (system `sys-002`). The built-in `admin` account (system `sys-001`) uses
+the `Admin__DeviceCode` that was configured when the account was first created; the existing
+database may still have an older device code.
 
 ## Raspberry Pi capture daemon
 
@@ -272,9 +278,9 @@ defaults into Neon. Never use the sample passwords in production.
 
 ### Running the external auth service locally
 
-1. Set `NEON_DB_URL` and a shared `INTERNAL_API_SECRET` in `Security-Camera-Backend/.env` (used by
-   Compose), and `DATABASE_URL` + the same `INTERNAL_API_SECRET` in
-   `external-auth-service/.env` (used by the seed script and direct Node runs).
+1. Set `NEON_DB_URL` and a shared `INTERNAL_API_SECRET` in the root `.env` (used by Compose), and
+   `DATABASE_URL` + the same `INTERNAL_API_SECRET` in `external-auth-service/.env` (used by the
+   seed script and direct Node runs).
 2. Create the `factory_kits` table and upsert the sample kits:
 
    ```bash
@@ -283,10 +289,9 @@ defaults into Neon. Never use the sample passwords in production.
    npm run seed
    ```
 
-3. Start the stack:
+3. Start the stack from the repository root:
 
    ```bash
-   cd Security-Camera-Backend
    docker compose up --build
    ```
 

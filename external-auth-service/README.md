@@ -50,8 +50,8 @@ Override them with `SEED_CAM_ADMIN_1_PASSWORD`, `SEED_CAM_ADMIN_2_PASSWORD`,
 `SEED_PI_API_KEY_SYS_001` and `SEED_PI_API_KEY_SYS_002` if needed.
 
 Docker Compose builds this directory with the multi-stage `Dockerfile` and runs the compiled
-`dist/src/node.js`. The root compose stack is `Security-Camera-Backend/compose.yaml` and reads
-`NEON_DB_URL` + `INTERNAL_API_SECRET` from `Security-Camera-Backend/.env`.
+`dist/src/node.js`. The root compose stack is `compose.yaml` at the repository root and reads
+`NEON_DB_URL` + `INTERNAL_API_SECRET` from the root `.env`.
 
 ## Manual Cloudflare Workers deployment
 
