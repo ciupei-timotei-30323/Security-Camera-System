@@ -16,4 +16,4 @@
 /Security-Camera-Pi/.pytest_cache/
 /tests/**/bin/
 /tests/**/obj/
-/.idea/
+*/.idea/
