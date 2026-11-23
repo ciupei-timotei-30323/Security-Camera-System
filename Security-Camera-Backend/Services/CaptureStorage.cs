@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Exceptions;
+using Security_Camera_Backend.Services.Security;
 
 namespace Security_Camera_Backend.Services;
 
@@ -25,9 +26,13 @@ public sealed class CaptureStorage : ICaptureStorage
 
         Directory.CreateDirectory(_capturesRoot);
 
+        // The extension is derived from the bytes we actually received, never from the client's
+        // file name (which may claim ".jpg" while containing anything at all).
+        var detectedFormat = await DetectImageFormatAsync(image!, ct);
+
         var destinationPath = Path.Combine(
             _capturesRoot,
-            $"raw_{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}.jpg");
+            $"raw_{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}{GetExtension(detectedFormat)}");
 
         try
         {
@@ -137,6 +142,57 @@ public sealed class CaptureStorage : ICaptureStorage
             _logger.LogWarning(ex, "Failed to delete capture file {FilePath}", filePath);
         }
     }
+
+    /// <summary>
+    /// Reads the payload header and rejects anything that is not a JPEG/PNG/WebP image. Doing this
+    /// before the file is created keeps arbitrary payloads (scripts, archives, polyglots) off the
+    /// captures volume and out of cv-service.
+    /// </summary>
+    private static async Task<ImageFormat> DetectImageFormatAsync(IFormFile image, CancellationToken ct)
+    {
+        var header = new byte[ImageSignatureValidator.HeaderBytesRequired];
+        var totalRead = 0;
+
+        await using (var stream = image.OpenReadStream())
+        {
+            while (totalRead < header.Length)
+            {
+                var read = await stream.ReadAsync(header.AsMemory(totalRead), ct);
+
+                if (read == 0)
+                {
+                    break;
+                }
+
+                totalRead += read;
+            }
+        }
+
+        var format = ImageSignatureValidator.Detect(header.AsSpan(0, totalRead));
+
+        if (format == ImageFormat.Unknown)
+        {
+            throw new ValidationAppException(
+                "The uploaded file is not a valid JPEG, PNG, or WebP image.",
+                $"Rejected upload '{image.FileName}': payload does not start with a supported image signature.");
+        }
+
+        if (!ImageSignatureValidator.MatchesDeclaredContentType(format, image.ContentType))
+        {
+            throw new ValidationAppException(
+                "The uploaded file's content type does not match its contents.",
+                $"Rejected upload '{image.FileName}': declared '{image.ContentType}' but the payload is {format}.");
+        }
+
+        return format;
+    }
+
+    private static string GetExtension(ImageFormat format) => format switch
+    {
+        ImageFormat.Png => ".png",
+        ImageFormat.WebP => ".webp",
+        _ => ".jpg"
+    };
 
     private static void Validate(IFormFile? image)
     {

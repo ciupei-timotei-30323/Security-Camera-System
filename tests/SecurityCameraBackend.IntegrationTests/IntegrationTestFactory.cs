@@ -79,6 +79,16 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
         ["ExternalAuth__StubAccounts__cam_admin_3__SystemId"] = "sys-003",
         ["ExternalAuth__StubAccounts__cam_admin_3__Password"] = FactoryAdmin3Password,
         ["ExternalAuth__StubAccounts__cam_admin_3__PiApiKey"] = "test-factory-pi-key-sys-003",
+        // Every integration test talks to one host from one loopback address. The per-IP login
+        // limiter would therefore throttle the suite itself, so the window is made deliberately
+        // generous here; the strict limit (5/min) is the production default and is asserted
+        // structurally in LoginProtectionTests.
+        ["Auth__LoginRateLimit__PermitLimit"] = "1000",
+        ["Auth__LoginRateLimit__WindowSeconds"] = "60",
+        ["Auth__LoginLockout__MaxFailures"] = "5",
+        ["Auth__LoginLockout__LockoutSeconds"] = "300",
+        // Multi-system backend: tokens are not pinned to a single node.
+        ["PiAuth__NodeSystemId"] = "",
         ["Storage__CapturesDirectory"] = CapturesDirectory,
         ["CvService__BaseUrl"] = "http://cv-service",
         ["ASPNETCORE_ENVIRONMENT"] = "Testing"

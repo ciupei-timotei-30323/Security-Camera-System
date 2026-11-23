@@ -16,5 +16,9 @@ public sealed class JwtOptions
 
     public string Audience { get; set; } = "security-camera-dashboard";
 
-    public int ExpirationMinutes { get; set; } = 480;
+    /// <summary>
+    /// Access-token lifetime. Kept short because logout revokes the <c>jti</c> and there is no
+    /// refresh flow: a leaked token is useless 30 minutes after it was minted.
+    /// </summary>
+    public int ExpirationMinutes { get; set; } = 30;
 }

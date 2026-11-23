@@ -19,9 +19,12 @@ public sealed class AuthService(
     ITokenRevocationService tokenRevocationService,
     IExternalAdminAuthClient externalAdminAuthClient,
     ISystemRegistry systemRegistry,
+    LoginLockoutTracker loginLockoutTracker,
     ILogger<AuthService> logger) : IAuthService
 {
     public const string SystemIdRequiredCode = "SYSTEM_ID_REQUIRED";
+
+    public const string LoginLockedCode = "LOGIN_LOCKED";
 
     private const string InvalidCredentialsMessage = "Invalid username or password.";
 
@@ -55,6 +58,21 @@ public sealed class AuthService(
                 $"Login request supplied a {normalizedSystemId.Length}-character systemId.");
         }
 
+        // Temporary lockout: a locked identity cannot even try, which caps online guessing at
+        // MaxFailures per LockoutSeconds per username/system pair.
+        if (loginLockoutTracker.IsLockedOut(normalizedUsername, normalizedSystemId, out var retryAfter))
+        {
+            logger.LogWarning(
+                "Rejected login for {Username} (system: {SystemId}): locked out for another {RetryAfterSeconds}s.",
+                normalizedUsername, normalizedSystemId ?? "<any>", (int)retryAfter.TotalSeconds);
+
+            throw new TooManyRequestsAppException(
+                "Too many failed login attempts. Try again later.",
+                $"Username '{normalizedUsername}' is locked out for another {retryAfter}.",
+                retryAfter,
+                LoginLockedCode);
+        }
+
         // Step A: factory administrators are validated by the external IAM service.
         var externalAdmin = await externalAdminAuthClient.ValidateAdminAsync(
             normalizedUsername, password, ct);
@@ -84,6 +102,8 @@ public sealed class AuthService(
                 systemId: externalAdmin.SystemId,
                 externalAdmin: true);
 
+            loginLockoutTracker.Reset(normalizedUsername, normalizedSystemId);
+
             logger.LogInformation(
                 "External administrator {Username} authenticated for system {SystemId}.",
                 externalAdmin.Username, externalAdmin.SystemId);
@@ -101,40 +121,53 @@ public sealed class AuthService(
         // Step B: fall back to a locally stored sub-user (or the built-in admin).
         var matchingUsers = await FindLocalUsersAsync(normalizedUsername, normalizedSystemId, ct);
 
-        if (matchingUsers.Count == 0)
+        // PASSWORD FIRST: the password is checked against every candidate record before any
+        // ambiguity is reported. Answering SYSTEM_ID_REQUIRED for a username alone would turn this
+        // endpoint into a username oracle, so a wrong password must always look like a plain 401.
+        var authenticatedCandidates = new List<(User User, PasswordVerificationResult Result)>();
+
+        foreach (var candidate in matchingUsers)
         {
+            var candidateResult = passwordHasher.VerifyHashedPassword(
+                candidate, candidate.PasswordHash, password);
+
+            if (candidateResult != PasswordVerificationResult.Failed)
+            {
+                authenticatedCandidates.Add((candidate, candidateResult));
+            }
+        }
+
+        if (authenticatedCandidates.Count == 0)
+        {
+            loginLockoutTracker.RegisterFailure(normalizedUsername, normalizedSystemId);
+
             logger.LogWarning(
-                "Login failed for unknown username {Username} (system: {SystemId}).",
+                matchingUsers.Count == 0
+                    ? "Login failed for unknown username {Username} (system: {SystemId})."
+                    : "Login failed for user {Username} (system: {SystemId}): invalid password.",
                 normalizedUsername, normalizedSystemId ?? "<any>");
 
             throw new UnauthorizedAppException(InvalidCredentialsMessage, InvalidCredentialsMessage);
         }
 
-        if (normalizedSystemId is null && matchingUsers.Count > 1)
+        if (normalizedSystemId is null && authenticatedCandidates.Count > 1)
         {
             logger.LogWarning(
-                "Login for username {Username} is ambiguous across {Count} systems; SYSTEM_ID_REQUIRED.",
-                normalizedUsername, matchingUsers.Count);
+                "Login for username {Username} matched the password in {Count} systems; SYSTEM_ID_REQUIRED.",
+                normalizedUsername, authenticatedCandidates.Count);
 
             throw new ValidationAppException(
                 "Multiple systems have a user with this username; please provide your Camera System ID.",
-                $"Username '{normalizedUsername}' exists in systems: " +
-                string.Join(", ", matchingUsers.Select(u => u.SystemId).OrderBy(id => id)) + ".",
+                $"Username '{normalizedUsername}' with a matching password exists in systems: " +
+                string.Join(", ", authenticatedCandidates
+                    .Select(candidate => candidate.User.SystemId)
+                    .OrderBy(id => id)) + ".",
                 SystemIdRequiredCode);
         }
 
-        var user = matchingUsers[0];
+        var (user, verificationResult) = authenticatedCandidates[0];
 
-        var verificationResult = passwordHasher.VerifyHashedPassword(user, user.PasswordHash, password);
-
-        if (verificationResult == PasswordVerificationResult.Failed)
-        {
-            logger.LogWarning(
-                "Login failed for user {Username} in system {SystemId}: invalid password.",
-                user.Username, user.SystemId);
-
-            throw new UnauthorizedAppException(InvalidCredentialsMessage, InvalidCredentialsMessage);
-        }
+        loginLockoutTracker.Reset(normalizedUsername, normalizedSystemId);
 
         if (verificationResult == PasswordVerificationResult.SuccessRehashNeeded)
         {

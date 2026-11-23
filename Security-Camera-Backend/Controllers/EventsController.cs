@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Net.Http.Headers;
+using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Contracts;
 using Security_Camera_Backend.Extensions;
 using Security_Camera_Backend.Filters;
@@ -99,6 +100,7 @@ public sealed class EventsController(
     [HttpPost]
     [ServiceFilter(typeof(PiApiKeyAuthFilter))]
     [Consumes("multipart/form-data")]
+    [RequestSizeLimit(RequestLimits.MaxEventUploadBytes)]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -176,6 +178,7 @@ public sealed class EventsController(
     [HttpPost("analyze")]
     [ServiceFilter(typeof(PiApiKeyAuthFilter))]
     [Consumes("multipart/form-data")]
+    [RequestSizeLimit(RequestLimits.MaxEventUploadBytes)]
     [ProducesResponseType(typeof(DetectionEventResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]

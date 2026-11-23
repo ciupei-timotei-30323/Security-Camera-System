@@ -2,9 +2,11 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Net.Http.Headers;
+using Security_Camera_Backend.Configuration;
 using Security_Camera_Backend.Extensions;
 using Security_Camera_Backend.Filters;
 using Security_Camera_Backend.Services.Camera;
+using Security_Camera_Backend.Services.Security;
 
 namespace Security_Camera_Backend.Controllers;
 
@@ -24,6 +26,7 @@ public sealed class CameraController(
     [HttpPost("frame")]
     [ServiceFilter(typeof(PiApiKeyAuthFilter))]
     [EnableRateLimiting(FrameRateLimitPolicy)]
+    [RequestSizeLimit(RequestLimits.MaxFrameUploadBytes)]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -50,6 +53,13 @@ public sealed class CameraController(
         }
 
         if (frame.Length == 0)
+        {
+            return BadRequest();
+        }
+
+        // A declared image/jpeg proves nothing: the newest frame is later served verbatim to every
+        // dashboard of the system, so the bytes themselves must be a JPEG.
+        if (!ImageSignatureValidator.IsJpeg(frame))
         {
             return BadRequest();
         }

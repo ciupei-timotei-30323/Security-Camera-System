@@ -124,6 +124,8 @@ public sealed class PiApiKeyAuthFilter : IAsyncActionFilter
     {
         var apiKeyHash = PiApiKeyHasher.HashToHex(providedKey);
 
+        // The hash comparison happens in SQL, so an index-equality search replaces any timing
+        // signal from byte-by-byte comparison. Only the resulting system id leaves the query.
         return await _dbContext.PiDevices
             .AsNoTracking()
             .Where(device => device.ApiKeyHash == apiKeyHash)

@@ -6,10 +6,29 @@ sub-user, entrance log, away-mode setting and Pi API key belongs to exactly one 
 
 ## Web dashboard
 
-The Next.js dashboard lives in [`frontend/`](frontend/) and talks to this API through a
-same-origin BFF. Route handlers own the JWT in an `httpOnly`, `SameSite=Lax` cookie and
-the catch-all `/api/[...path]` proxy streams request/response bodies without buffering, so MJPEG and
-`<img src="/api/events/{id}/face">` work while the token never reaches browser JavaScript.
+The Next.js dashboard lives in [`frontend/`](frontend/) and is the **only** publicly reachable
+service. Every browser request goes to a same-origin BFF, which proxies it to a private backend.
+The backend never has a public URL or domain.
+
+The BFF seals the backend JWT (plus the camera system it belongs to) into its own cookie rather than
+storing the backend's token:
+
+- `POST /api/auth/login` receives `{ username, password, systemId? }`, logs in upstream, and seals
+  `{ systemId, edgeJwt, exp }` with AES-256-GCM into the `HttpOnly`, `SameSite=Lax`, `Path=/`
+  cookie `bff_session`. The raw JWT is **never** returned to browser JavaScript.
+- The cookie is encrypted with `BFF_SESSION_SECRET` (at least 32 bytes). Production startup fails
+  when it is missing or too short.
+- `Secure` is set automatically when `NODE_ENV=production` or when the request carries
+  `x-forwarded-proto: https`, so Cloudflare Quick Tunnels need no extra flags.
+- Each Pi/backend may sign its tokens with its own key, so the BFF never verifies backend JWT
+  signatures. It only decrypts its own cookie, routes strictly by the sealed `systemId`, and
+  forwards `Authorization: Bearer <edgeJwt>` upstream.
+- Expired or tampered cookies are rejected and cleared immediately.
+
+Upstream targets come from `EDGE_BACKENDS_JSON` (a `systemId` → private URL map, e.g.
+`{"sys-001":"http://100.64.0.10:8080"}`) with `BACKEND_URL` as the single-backend fallback. A
+`systemId` that is not mapped is rejected with `403`; a `systemId` is never read from query
+parameters, headers or request bodies to pick a target.
 
 Local development:
 
@@ -21,7 +40,16 @@ npm run dev                  # http://localhost:3000
 ```
 
 The root `compose.yaml` also defines a `dashboard` service on port `3000`
-with `BACKEND_URL=http://security-camera-backend:8080`.
+with `BACKEND_URL=http://security-camera-backend:8080` and the backend on the private
+`security-camera-internal` network only.
+
+### Network exposure
+
+Only `dashboard` publishes a host port (`3000`). The backend, PostgreSQL, `cv-service`,
+`external-auth-service` and the Raspberry Pi exist on the private Docker network or the private
+Tailscale mesh; none of them is reachable from the host, LAN or internet except through the BFF.
+`mailpit` is bound to `127.0.0.1` as a development-only exception. All containers run as non-root
+with `no-new-privileges`.
 
 Sign in with one of the seeded factory administrators from the `external-auth-service` seed:
 `cam_admin_1` / `factory-pass-sys-001` (system `sys-001`) or `cam_admin_2` /
@@ -44,9 +72,14 @@ queue/rejected-file behaviour.
 
 - **Factory administrators** are validated by an external IAM service (or the local stub in
   development). A successful login registers the administrator's camera system and Pi key locally.
-- **Sub-users** live in PostgreSQL and are unique per system. Two systems may both have a user
-  named `alice`; logging in without a `systemId` then returns
-  `400 SYSTEM_ID_REQUIRED` so the dashboard can ask which system to use.
+- **Sub-users** live in PostgreSQL and are unique per system. When `systemId` is omitted, the
+  password is verified against every candidate record before anything else: 0 matches return
+  `401`, 1 match logs that user in, and only 2+ matches return `400 SYSTEM_ID_REQUIRED` so the
+  dashboard can ask which system to use. A username alone therefore reveals nothing.
+- **Login protection:** `POST /api/auth/login` is rate limited per client IP (`Auth:LoginRateLimit`,
+  default 5 requests/minute → `429` with `Retry-After`) and additionally locks a
+  username/system pair for `Auth:LoginLockout:LockoutSeconds` after `MaxFailures` (default 5
+  failures / 300 seconds → `429`, `code: LOGIN_LOCKED`).
 - **JWT claims** include `sub`, `name`, `role` (`Admin`/`User`) and `system_id`. Every dashboard
   query derives the tenant from `system_id`; it never trusts a client-supplied system id.
 - **Pi requests** authenticate with `X-Api-Key`. The filter resolves the key to a `SystemId` from
@@ -266,11 +299,24 @@ Expected responses:
 | `PiAuth__AlertTerminalSystems__sys-001` | `dev-alert-terminal-key-sys-001` | Terminal key for `sys-001` |
 | `PiAuth__AlertTerminalSystems__sys-002` | `dev-alert-terminal-key-sys-002` | Terminal key for `sys-002` |
 | `Notifications__EmailCooldownSeconds` | `60` | Per-system e-mail cooldown |
-| `Notifications__DashboardBaseUrl` | `http://localhost:5173` | Dashboard base for alert links |
+| `Notifications__DashboardBaseUrl` | `http://localhost:3000` | Dashboard base for alert links |
 | `Notifications__EmailRetryBaseDelayMilliseconds` | `1000` | First retry delay (doubles per retry) |
 | `Smtp__Host` / `Smtp__Port` | `mailpit` / `1025` | SMTP server (compose default) |
 | `Smtp__FromAddress` | `alerts@security-camera.local` | Alert sender address |
 | `Alarm__DurationSeconds` | `15` | Terminal alarm window after a suspect event |
+| `Jwt__ExpirationMinutes` | `30` | Dashboard token lifetime (logout revokes the `jti`) |
+| `PiAuth__NodeSystemId` | empty | Pins a single-Pi deployment to its own `SystemId` |
+| `Cors__AllowedOrigins` | empty | Explicit CORS allow-list; CORS is disabled when empty |
+| `Auth__LoginRateLimit__PermitLimit` / `WindowSeconds` | `5` / `60` | Per-IP login requests per window |
+| `Auth__LoginLockout__MaxFailures` / `LockoutSeconds` | `5` / `300` | Per username/system lockout |
+
+Outside the Development (`Development`/`Testing`) environments the backend refuses to start while
+any sample secret is still configured — `dev-only-api-key`, `dev-pi-key-*`,
+`dev-alert-terminal-key-*`, `factory-pass-*`, a missing or shorter-than-32-byte `Jwt:Secret`, a
+missing `ExternalAuth:InternalSecret`, or `ExternalAuth:UseStub=true`. Swagger/OpenAPI is only
+mapped in Development, and request bodies are capped by Kestrel (10 MB) with per-endpoint limits
+(10 MB for events, 250 KB for camera frames). Uploaded images are validated by magic bytes, not by
+content type, before anything is written to disk.
 
 `appsettings.Development.json`, `compose.yaml` and `.env.example` contain the two sample factory
 kits (`cam_admin_1` → `sys-001`, `cam_admin_2` → `sys-002`). The external service seeds the same
@@ -296,8 +342,9 @@ defaults into Neon. Never use the sample passwords in production.
    ```
 
    The backend waits for the `external-auth-service` healthcheck and calls it at
-   `http://external-auth-service:3001`. The service is otherwise internal to the Compose bridge
-   network; `127.0.0.1:3001` is published only for local debugging.
+   `http://external-auth-service:3001`. The service is internal to the Compose bridge network and
+   publishes no host port; for local debugging outside Compose, point `ExternalAuth__BaseUrl` at a
+   locally running instance instead of publishing one.
 
 For manual Cloudflare Workers deployment later, see
 [`external-auth-service/README.md`](external-auth-service/README.md). No deployment is performed
@@ -397,3 +444,28 @@ MJPEG streaming, stream caps, and includes unit tests for the schedule logic (ex
 midnight crossing and DST transitions) and latest-frame expiry. Alerting tests use an injected
 fake SMTP sender and cover suspect/non-suspect events, e-mail cooldown summarization, attachments,
 terminal-only authentication, alarm expiry, and cross-tenant alarm isolation.
+
+Security-specific coverage:
+
+- `LoginHardeningTests` — a wrong password never reveals that a username exists in several systems
+  (plain `401`, no `code`), a single matching password logs in without `systemId`, only a password
+  valid in 2+ systems returns `400 SYSTEM_ID_REQUIRED`; per username/system lockout returns `429`
+  with `code: LOGIN_LOCKED` and `Retry-After`; image uploads with fake magic bytes or a content
+  type that contradicts the bytes are rejected with `400`.
+- `ProductionSecretValidationTests` — every development/sample secret (dev API keys, factory
+  passwords, short JWT keys, `ExternalAuth:UseStub=true`, stub accounts) is refused outside
+  Development, and the real host fails to start with those settings.
+
+The frontend has its own suite for the BFF:
+
+```bash
+cd frontend && npm test     # node --experimental-strip-types --test
+```
+
+It asserts that device/ingestion routes (`POST /api/events`, `POST /api/camera/frame`,
+`/api/device/*`) return `404` through the BFF and never reach an upstream, that `X-Api-Key`,
+`X-Internal-Secret` and client `Authorization` headers are stripped, that cross-origin
+`POST`/`PUT`/`DELETE` requests get `403` (while still clearing the session on logout), that
+`systemId` in a query string cannot retarget the proxy, that the sealed cookie is `HttpOnly`,
+`SameSite=Lax`, `Path=/` and `Secure` when appropriate, and that MJPEG responses keep streaming
+unbuffered.

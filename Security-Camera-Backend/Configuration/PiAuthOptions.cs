@@ -20,6 +20,14 @@ public sealed class PiAuthOptions
     public string DefaultSystemId { get; set; } = DefaultSystemIdValue;
 
     /// <summary>
+    /// Optional identity of this Pi/backend. When set, dashboard JWTs whose <c>system_id</c> claim
+    /// names a different system are rejected, so a single-Pi node can never be driven by tokens
+    /// minted for another camera kit. Leave empty for multi-system deployments.
+    /// Env var: <c>PiAuth__NodeSystemId</c>.
+    /// </summary>
+    public string? NodeSystemId { get; set; }
+
+    /// <summary>
     /// Additional camera kits, keyed by <c>SystemId</c> with the raw API key as the value.
     /// Environment variables use <c>PiAuth__Systems__sys-002</c>.
     /// </summary>

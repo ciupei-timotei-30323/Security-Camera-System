@@ -36,6 +36,14 @@ public sealed class GlobalExceptionHandler(
             problemDetails.Extensions["code"] = codedException.ErrorCode;
         }
 
+        // Lockout responses tell the client how long to wait before retrying.
+        if (exception is TooManyRequestsAppException { RetryAfter: { } retryAfter })
+        {
+            var seconds = (int)Math.Ceiling(retryAfter.TotalSeconds);
+            httpContext.Response.Headers.RetryAfter = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            problemDetails.Extensions["retryAfterSeconds"] = seconds;
+        }
+
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext()
         {
             HttpContext = httpContext,

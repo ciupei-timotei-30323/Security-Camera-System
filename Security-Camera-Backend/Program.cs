@@ -20,6 +20,7 @@ using Security_Camera_Backend.Services.Camera;
 using Security_Camera_Backend.Services.Cv;
 using Security_Camera_Backend.Services.ExternalAuth;
 using Security_Camera_Backend.Services.Notifications;
+using Security_Camera_Backend.Services.Security;
 using Security_Camera_Backend.Services.Settings;
 using Security_Camera_Backend.Services.Systems;
 using Security_Camera_Backend.Services.Users;
@@ -35,6 +36,23 @@ try
     // Real environment variables (Docker/systemd) win over a local .env file.
     DotNetEnv.Env.NoClobber().TraversePath().Load();
     var builder = WebApplication.CreateBuilder(args);
+
+    // Fail fast: a non-Development host must never boot with the repository's sample secrets
+    // (dev API keys, factory-pass accounts, a short/known JWT key, the external-auth stub).
+    // "Testing" is exempt because integration tests deliberately run the stub and short keys.
+    var isDevelopmentLike = builder.Environment.IsDevelopment()
+                            || builder.Environment.IsEnvironment("Testing");
+    ProductionSecretValidator.Validate(builder.Configuration, isDevelopmentLike);
+
+    // Upload limits. Kestrel enforces the ceiling before the request is read, so an oversized
+    // body is rejected without buffering it. Per-endpoint limits are applied with
+    // [RequestSizeLimit] on the ingestion actions.
+    builder.WebHost.ConfigureKestrel(options =>
+    {
+        options.Limits.MaxRequestBodySize = RequestLimits.MaxBodyBytes;
+        options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(30);
+        options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
+    });
 
     builder.Host.UseSerilog((context, services, configuration) => configuration
         .ReadFrom.Configuration(context.Configuration)
@@ -79,6 +97,9 @@ try
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
     builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.SectionName));
     builder.Services.Configure<AlarmOptions>(builder.Configuration.GetSection(AlarmOptions.SectionName));
+    builder.Services.Configure<LoginRateLimitOptions>(builder.Configuration.GetSection(LoginRateLimitOptions.SectionName));
+    builder.Services.Configure<LoginLockoutOptions>(builder.Configuration.GetSection(LoginLockoutOptions.SectionName));
+    builder.Services.Configure<CorsOptions>(builder.Configuration.GetSection(CorsOptions.SectionName));
 
     // Development defaults to the configurable stub; production defaults to the real factory IAM.
     var useStubExternalAuth = builder.Configuration.GetValue<bool?>("ExternalAuth:UseStub")
@@ -127,15 +148,17 @@ try
     builder.Services.AddSingleton<IJwtTokenService, JwtTokenService>();
     builder.Services.AddScoped<ISystemRegistry, SystemRegistry>();
     builder.Services.AddScoped<IUserManagementService, UserManagementService>();
+    builder.Services.AddSingleton<LoginLockoutTracker>();
     builder.Services.AddHostedService<AdminUserSeeder>();
 
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         .AddJwtBearer();
 
     builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
-        .Configure<IOptions<JwtOptions>>((options, jwtOptionsAccessor) =>
+        .Configure<IOptions<JwtOptions>, IOptions<PiAuthOptions>>((options, jwtOptionsAccessor, piAuthAccessor) =>
         {
             var jwt = jwtOptionsAccessor.Value;
+            var nodePiAuth = piAuthAccessor.Value;
 
             options.MapInboundClaims = false;
             options.TokenValidationParameters = new TokenValidationParameters
@@ -157,6 +180,15 @@ try
                 // A JWT is only as good as its jti: reject tokens that were explicitly logged out.
                 OnTokenValidated = async context =>
                 {
+                    // Reject tokens minted for a different Pi when this node is pinned.
+                    if (!NodeSystemBinding.IsTokenBoundToNode(
+                            context.Principal?.FindFirstValue(AuthClaimTypes.SystemId),
+                            nodePiAuth))
+                    {
+                        context.Fail("Token belongs to a different camera system.");
+                        return;
+                    }
+
                     var jti = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
 
                     // Tokens issued by this API always carry a jti. If one is missing there is nothing to
@@ -219,6 +251,11 @@ try
     builder.Services.AddScoped<ISystemStatusService, SystemStatusService>();
     builder.Services.AddSingleton(TimeProvider.System);
 
+    var loginRateLimit = builder.Configuration
+        .GetSection(LoginRateLimitOptions.SectionName)
+        .Get<LoginRateLimitOptions>() ?? new LoginRateLimitOptions();
+    var trustForwardedHeaders = builder.Configuration.GetValue<bool>("ReverseProxy:TrustForwardedHeaders");
+
     builder.Services.AddRateLimiter(options =>
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -232,7 +269,62 @@ try
                     QueueLimit = 0,
                     AutoReplenishment = true
                 }));
+
+        // Strict per-client-IP limit on credential submission: password guessing is the most
+        // attractive endpoint on the whole API, and no legitimate browser needs more than a few
+        // attempts per minute.
+        options.AddPolicy(AuthController.LoginRateLimitPolicy, httpContext =>
+            loginRateLimit.Enabled
+                ? RateLimitPartition.GetFixedWindowLimiter(
+                    GetLoginRateLimitPartitionKey(httpContext),
+                    _ => new FixedWindowRateLimiterOptions
+                    {
+                        PermitLimit = Math.Max(1, loginRateLimit.PermitLimit),
+                        Window = TimeSpan.FromSeconds(Math.Max(1, loginRateLimit.WindowSeconds)),
+                        QueueLimit = 0,
+                        AutoReplenishment = true
+                    })
+                : RateLimitPartition.GetNoLimiter("login-rate-limit-disabled"));
+
+        // Keep the 429 shape consistent with the rest of the API (ProblemDetails, not an empty body).
+        options.OnRejected = async (context, ct) =>
+        {
+            context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+            context.HttpContext.Response.Headers.RetryAfter = "60";
+
+            await context.HttpContext.Response.WriteAsJsonAsync(
+                new ProblemDetails
+                {
+                    Status = StatusCodes.Status429TooManyRequests,
+                    Title = "Too many requests",
+                    Detail = "Too many login attempts. Try again later.",
+                    Instance = context.HttpContext.Request.Path
+                },
+                ct);
+        };
     });
+
+    // The backend is not reachable by browsers directly: the dashboard BFF proxies every call
+    // same-origin. CORS is therefore off unless an explicit allow-list is configured (never a
+    // wildcard, which would let any origin drive the API with a stolen token).
+    var allowedCorsOrigins = builder.Configuration
+        .GetSection(CorsOptions.SectionName)
+        .Get<CorsOptions>()?.AllowedOrigins ?? [];
+
+    builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
+    {
+        if (allowedCorsOrigins.Length == 0)
+        {
+            // No origins: the policy stays restrictive so the CORS middleware never emits a
+            // wildcard header. Requests without an allowed origin are simply not CORS-enabled.
+            policy.SetIsOriginAllowed(_ => false);
+            return;
+        }
+
+        policy.WithOrigins(allowedCorsOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    }));
 
     builder.Services.AddHttpClient<ICvServiceClient, CvServiceClient>((serviceProvider, client) =>
     {
@@ -259,13 +351,16 @@ try
     app.UseSerilogRequestLogging();
 
     app.UseExceptionHandler();
-// Configure the HTTP request pipeline.
+
+    // Swagger/OpenAPI describes every endpoint and schema to an anonymous reader; in production
+    // that is attack-surface documentation for free. Development only.
     if (app.Environment.IsDevelopment())
     {
         app.MapOpenApi();
     }
 
     app.UseHttpsRedirection();
+    app.UseCors();
 
     // Captures are intentionally not served as static files: images are only reachable through
     // the tenant-scoped /api/events/{id}/face and /annotated endpoints.
@@ -276,10 +371,38 @@ try
     app.MapControllers();
 
     app.Run();
+
+    // SECURITY: the partition key is the TCP peer address. X-Forwarded-For is client-controlled
+    // unless a trusted proxy rewrites it, so honouring it by default would let an attacker bypass
+    // the limit by rotating a header. Set ReverseProxy:TrustForwardedHeaders=true only when the
+    // backend sits behind a proxy that overwrites the header (see appsettings comments).
+    string GetLoginRateLimitPartitionKey(HttpContext httpContext)
+    {
+        if (trustForwardedHeaders)
+        {
+            var forwardedFor = httpContext.Request.Headers["X-Forwarded-For"].ToString();
+
+            if (!string.IsNullOrWhiteSpace(forwardedFor))
+            {
+                var firstHop = forwardedFor.Split(',', 2)[0].Trim();
+
+                if (firstHop.Length > 0)
+                {
+                    return firstHop;
+                }
+            }
+        }
+
+        return httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown-client";
+    }
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
+
+    // A swallowed exception would exit with status 0, which tells Docker/systemd the process
+    // finished cleanly — exactly the opposite of what a fail-fast startup check means.
+    Environment.ExitCode = 1;
 }
 finally
 {

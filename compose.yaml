@@ -1,5 +1,17 @@
 # Compose project name kept from the previous Security-Camera-Backend/compose.yaml location so
 # existing containers and `docker compose down` keep working after the move.
+#
+# NETWORK MODEL (security-critical):
+#   * `edge`     — the only network with a published host port. Only `dashboard` joins it.
+#   * `internal` — a private bridge with NO published ports. The backend, cv-service,
+#                  external-auth-service and mailpit live only here, so nothing on the host, LAN
+#                  or internet can open a connection to them.
+#   Egress is deliberately kept (Neon PostgreSQL and the factory IAM service are external), so the
+#   network is not `internal: true`; reachability is controlled by publishing no host ports at
+#   all rather than by cutting the default gateway.
+#   Net effect: only the Next.js dashboard is publicly reachable. The backend, PostgreSQL,
+#   cv-service and the Raspberry Pi(s) are reachable only over Docker networking or the private
+#   Tailscale mesh (map remote sites in the dashboard's EDGE_BACKENDS_JSON).
 name: security-camera-backend
 
 services:
@@ -12,17 +24,27 @@ services:
       DB_URL: ${DB_URL}
       PiAuth__ApiKey: ${PiAuth__ApiKey}
       PiAuth__DefaultSystemId: ${PiAuth__DefaultSystemId:-sys-001}
-      PiAuth__Systems__sys-002: ${PiAuth__Systems__sys-002:-dev-only-api-key-sys-002}
-      PiAuth__AlertTerminalSystems__sys-001: ${PiAuth__AlertTerminalSystems__sys-001:-dev-alert-terminal-key-sys-001}
-      PiAuth__AlertTerminalSystems__sys-002: ${PiAuth__AlertTerminalSystems__sys-002:-dev-alert-terminal-key-sys-002}
+      # Optional: pin this Pi/backend to its own system id. When set, JWTs carrying a different
+      # `system_id` claim are rejected outright.
+      PiAuth__NodeSystemId: ${PiAuth__NodeSystemId:-}
+      # Every request reaches this container from the dashboard, so the login limiter must key on
+      # the address the dashboard forwards (it only does so when TRUST_PROXY_HEADERS=true there).
+      ReverseProxy__TrustForwardedHeaders: "true"
+      # No sample-secret fallbacks: a production deploy must supply its own keys (the backend
+      # refuses to start on dev-only-* values). Empty entries are simply ignored by the filter.
+      PiAuth__Systems__sys-002: ${PiAuth__Systems__sys-002:-}
+      PiAuth__AlertTerminalSystems__sys-001: ${PiAuth__AlertTerminalSystems__sys-001:-}
+      PiAuth__AlertTerminalSystems__sys-002: ${PiAuth__AlertTerminalSystems__sys-002:-}
       Storage__CapturesDirectory: /data/captures
       CvService__BaseUrl: http://cv-service:8000
       CvService__TimeoutSeconds: 10
       Admin__DeviceCode: ${Admin__DeviceCode}
       Jwt__Secret: ${Jwt__Secret}
+      # Short-lived dashboard tokens; every one carries a jti that logout revokes.
+      Jwt__ExpirationMinutes: ${Jwt__ExpirationMinutes:-30}
       # Outbound suspect alerts. Mailpit catches development e-mail at http://localhost:8025.
       Notifications__EmailCooldownSeconds: ${Notifications__EmailCooldownSeconds:-60}
-      Notifications__DashboardBaseUrl: ${Notifications__DashboardBaseUrl:-http://localhost:5173}
+      Notifications__DashboardBaseUrl: ${Notifications__DashboardBaseUrl:-http://localhost:3000}
       Notifications__EmailRetryBaseDelayMilliseconds: ${Notifications__EmailRetryBaseDelayMilliseconds:-1000}
       Smtp__Host: ${Smtp__Host:-mailpit}
       Smtp__Port: ${Smtp__Port:-1025}
@@ -37,14 +59,17 @@ services:
       ExternalAuth__BaseUrl: http://external-auth-service:3001
       ExternalAuth__TimeoutSeconds: ${ExternalAuth__TimeoutSeconds:-10}
       ExternalAuth__InternalSecret: ${INTERNAL_API_SECRET}
-      ExternalAuth__StubAccounts__cam_admin_1__SystemId: sys-001
-      ExternalAuth__StubAccounts__cam_admin_1__Password: ${ExternalAuth__StubAccounts__cam_admin_1__Password:-factory-pass-sys-001}
-      ExternalAuth__StubAccounts__cam_admin_1__PiApiKey: ${ExternalAuth__StubAccounts__cam_admin_1__PiApiKey:-dev-pi-key-sys-001}
-      ExternalAuth__StubAccounts__cam_admin_2__SystemId: sys-002
-      ExternalAuth__StubAccounts__cam_admin_2__Password: ${ExternalAuth__StubAccounts__cam_admin_2__Password:-factory-pass-sys-002}
-      ExternalAuth__StubAccounts__cam_admin_2__PiApiKey: ${ExternalAuth__StubAccounts__cam_admin_2__PiApiKey:-dev-pi-key-sys-002}
-    ports:
-      - "8080:8080"
+      # Stub accounts are intentionally absent here: this stack validates factory admins against
+      # the real external-auth-service, and the backend refuses to boot with stub credentials
+      # outside Development (see appsettings.Development.json for the local stub).
+      # No wildcard CORS: the BFF is same-origin. Set a comma-separated list only if a browser
+      # must call this backend directly (it normally must not, it has no public URL).
+      Cors__AllowedOrigins: ${Cors__AllowedOrigins:-}
+    # No published host port on purpose: the backend is reachable only on the internal network.
+    expose:
+      - "8080"
+    networks:
+      - internal
     volumes:
       # Shared with cv-service: raw frames in, face crops out. Never stored in PostgreSQL.
       - captures:/data/captures
@@ -56,6 +81,11 @@ services:
       mailpit:
         condition: service_started
     restart: unless-stopped
+    # Container hardening: unprivileged user (set in the Dockerfile) + no new privileges.
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
 
 
   dashboard:
@@ -64,17 +94,36 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     environment:
-      # Server-side BFF target. The browser only talks to the dashboard origin.
+      # Server-side BFF target on the internal network. The browser only talks to the dashboard
+      # origin; the backend has no public URL.
       BACKEND_URL: http://security-camera-backend:8080
+      # Private per-system backends (Tailscale/LAN). Empty = single-backend fallback above.
+      EDGE_BACKENDS_JSON: ${EDGE_BACKENDS_JSON:-}
+      # Seals the bff_session cookie. Docker build fails fast at runtime if this is < 32 bytes.
+      BFF_SESSION_SECRET: ${BFF_SESSION_SECRET}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Factory-admin dispatch: validate credentials here, then log in to the returned system.
+      EXTERNAL_AUTH_URL: http://external-auth-service:3001
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       NODE_ENV: production
-      # Cookies are Secure by default in production. Set to true when serving over HTTPS.
+      # Cookies are Secure by default in production and whenever x-forwarded-proto is https.
+      # Compose defaults this to false for plain-HTTP LAN access.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Set to true only behind a proxy that overwrites X-Forwarded-For / CF-Connecting-IP
+      # (Cloudflare, Traefik, Caddy). Forwarded client IPs feed the backend login limiter.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+    # The ONLY service published to the host/public ingress.
     ports:
       - "3000:3000"
+    networks:
+      - edge
+      - internal
     depends_on:
       security-camera-backend:
         condition: service_started
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 
   external-auth-service:
@@ -86,9 +135,12 @@ services:
       DATABASE_URL: ${NEON_DB_URL}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       PORT: 3001
-    # Internal to the compose bridge network. Host binding is for local debugging only.
-    ports:
-      - "127.0.0.1:3001:3001"
+    # Internal only: never published to the host. Local `dotnet run` debugging should use the
+    # `ExternalAuth__BaseUrl` override described in .env.example instead.
+    expose:
+      - "3001"
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -96,13 +148,19 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 
   mailpit:
     image: axllent/mailpit:v1.21
+    # Development-only mail catcher. Bound to loopback so it can never be reached from another
+    # host, and it is the one exception to the "no host ports" rule next to the dashboard.
     ports:
-      - "1025:1025" # SMTP
-      - "8025:8025" # web UI: http://localhost:8025
+      - "127.0.0.1:1025:1025" # SMTP
+      - "127.0.0.1:8025:8025" # web UI: http://localhost:8025
+    networks:
+      - internal
     restart: unless-stopped
 
 
@@ -111,6 +169,11 @@ services:
     build:
       context: ./Security-Camera-Backend/cv-service
       dockerfile: Dockerfile
+    # Internal only. Never published; reachable at http://cv-service:8000 from the backend.
+    expose:
+      - "8000"
+    networks:
+      - internal
     volumes:
       # Must match the exact mount path (/data/captures) used by the backend
       - captures:/data/captures
@@ -121,6 +184,18 @@ services:
       retries: 5
       start_period: 15s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # Public-facing: only the dashboard joins this one.
+  edge:
+    name: security-camera-edge
+  # Private: no service here publishes a host port, so these containers are unreachable from
+  # outside the Docker network. Egress stays enabled only because the backend talks to an external
+  # PostgreSQL (Neon) and the factory IAM service.
+  internal:
+    name: security-camera-internal
 
 volumes:
   captures:
