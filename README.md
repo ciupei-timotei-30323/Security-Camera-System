@@ -68,6 +68,26 @@ queue is bounded by `QUEUE_MAX_MB`. It never listens for inbound connections.
 See the daemon README for installation, `.env` settings, the systemd unit and the offline
 queue/rejected-file behaviour.
 
+`STREAM_MODE` selects the live video path (`webrtc` by default, `mjpeg` as the fallback):
+
+- `webrtc` — the daemon runs a second `Picamera2` camera configuration that encodes H.264
+  (`H264Encoder` + `FfmpegOutput`) and pushes it over RTSP to
+  `rtsp://<MQTT/RTSP user>:${PI_API_KEY}@${BACKEND_HOST}:8554/${SYSTEM_ID}` with
+  `-preset ultrafast -tune zerolatency -g 30 -f rtsp -rtsp_transport tcp`. The publisher thread
+  restarts automatically when the RTSP socket drops; motion detection and `POST /api/events`
+  uploads are unchanged.
+- `mjpeg` — the original `POST /api/camera/frame` loop.
+
+See [`Security-Camera-Pi/README.md`](Security-Camera-Pi/README.md) for the streaming settings.
+
+## ESP32 alert terminal
+
+The ESP32 firmware lives in [`esp32-alert-terminal/`](esp32-alert-terminal/README.md) (PlatformIO,
+Arduino C++). It subscribes over MQTT to `systems/<SYSTEM_ID>/alarm`, renders `line1`/`line2` on a
+16x2 I2C LCD, drives an armed LED and pulses a buzzer + red LED while `alarm` is true. Reconnects
+use exponential backoff (2 s → 60 s) and a `GET /api/device/status` poll takes over while the
+broker is unreachable. See its README for wiring, `include/config.h`, build and flash steps.
+
 ## Multi-tenancy
 
 - **Factory administrators** are validated by an external IAM service (or the local stub in
@@ -108,6 +128,8 @@ queue/rejected-file behaviour.
 | `GET` | `/api/camera/stream` | JWT | MJPEG stream; max 5 concurrent streams per system |
 | `GET` | `/api/system/status` | JWT | camera/terminal online state plus backend and CV health |
 | `GET` | `/api/device/status` | terminal `X-Api-Key` | tiny ARMED/DISARMED/SUSPECT payload for the ESP32 |
+| `POST` | `/api/internal/mediamtx-auth` | MediaMTX (internal) | stream `publish`/`read` authorization |
+| `GET` | `/api/realtime/ticket` | BFF only | short-lived WHEP URL + stream token + MQTT credentials |
 | `GET`/`PUT` | `/api/away-mode-settings` | JWT | per-system arm/disarm state and schedule |
 | `GET`/`PUT` | `/api/settings/away-mode` | JWT | alias for the same setting |
 
@@ -203,6 +225,80 @@ curl -s http://localhost:8080/api/device/status \
 
 `line1`/`line2` are padded/truncated to 16 characters for the LCD. `armed` reflects the system's
 away mode; `alarm` is true only while the alarm window is open.
+
+### Event-driven alerts over MQTT
+
+The same document is published to Mosquitto so the terminal and the dashboard no longer poll:
+
+| Topic | Retain | QoS | Payload |
+|---|---|---|---|
+| `systems/{systemId}/alarm` | yes | 1 | exactly the `GET /api/device/status` document above |
+| `systems/{systemId}/events` | no | 1 | `{ "eventId", "timestamp", "isSuspect", "hasFace" }` |
+
+`MqttNotifier` runs inside the existing `System.Threading.Channels` notification pipeline, so an
+MQTT outage can never fail ingestion. A suspect event publishes the retained alarm document,
+then a delayed task publishes the cleared document once `Alarm:DurationSeconds` expires. A
+`PUT /api/settings/away-mode` publishes the new `armed` state immediately. Every ingested event
+publishes a non-retained summary so open dashboards refresh without polling. `GET
+/api/device/status` and `GET /api/camera/stream` keep working unchanged for A/B latency testing.
+
+Configuration (`Mqtt__*`): `Enabled` (default `true`), `Host` (default `mosquitto`), `Port`
+(default `1883`), `Username`, `Password`, `ClientId` (default `security-camera-backend`),
+`TopicPrefix` (default `systems`), `PublishTimeoutSeconds` (default `5`). Publishing is skipped
+when `Host` is empty or `Enabled=false`.
+
+`mosquitto/` holds the broker configuration: `mosquitto.conf` (listeners `1883` MQTT and `9001`
+WebSockets, password file, ACL file), `acl` (the `backend` user may read/write `systems/#`; the
+`dashboard` user may only read `systems/+/alarm` and `systems/+/events`), and `entrypoint.sh`
+(seeds `passwd` from `MQTT_BACKEND_USER/PASS` and `MQTT_CLIENT_USER/PASS` on first start). Change
+those passwords **before** the first `docker compose up`, or delete the
+`security-camera-mosquitto-data` volume to regenerate them.
+
+### WebRTC video (RTSP → MediaMTX → WHEP)
+
+The Pi publishes hardware-encoded H.264 over RTSP to MediaMTX (`bluenviron/mediamtx`), and the
+browser plays it over WebRTC directly — video never traverses Next.js. `mediamtx/mediamtx.yml`
+enables RTSP on `:8554`, WebRTC on `:8889` (WHEP signalling) and the ICE UDP mux on `:8189`, and
+delegates authorization to the backend:
+
+```yaml
+authMethod: http
+authHTTPAddress: http://security-camera-backend:8080/api/internal/mediamtx-auth
+paths:
+  all_others:
+```
+
+`POST /api/internal/mediamtx-auth` accepts MediaMTX's `{ user, password, token, ip, action, path,
+protocol, id, query }` payload and enforces tenant isolation:
+
+- **`publish`** — the Pi API key arrives in `password`/`token` (or as a `token=` query parameter).
+  It must resolve to a **camera** key in `PiDevices` (alert-terminal keys are rejected) whose
+  `SystemId` equals the path (`sys-001`, trimmed of any leading `/`). `200 OK` on match, `401`
+  otherwise.
+- **`read`** — the dashboard JWT arrives as `token` (or `token=` query parameter). Its signature,
+  expiry and revoked `jti` are validated and its `system_id` claim must equal the path. `200 OK`
+  with `{ "expireAt": "<jwt exp, ISO-8601>" }` on match, `401` otherwise.
+
+### Real-time dashboard credentials
+
+`GET /api/realtime/ticket` is served by the BFF itself and is never proxied upstream. It decrypts
+the sealed `bff_session` cookie and returns
+
+```json
+{
+  "systemId": "sys-001",
+  "webrtcWhepUrl": "https://cam.example.com/sys-001/whep",
+  "streamToken": "<edgeJwt>",
+  "mqttWsUrl": "wss://cam.example.com/mqtt",
+  "mqttUsername": "dashboard",
+  "mqttPassword": "..."
+}
+```
+
+The tenant always comes from the cookie, never from a query string or header, so a caller cannot
+request another system's stream. The WHEP URL is built from `MEDIAMTX_PUBLIC_URL` (or
+`NEXT_PUBLIC_MEDIAMTX_URL`); the broker URL from `MQTT_PUBLIC_WS_URL`. When either is unset the
+ticket returns empty values and the dashboard keeps its MJPEG fallback and 3-second polling.
 
 ### Away mode
 
