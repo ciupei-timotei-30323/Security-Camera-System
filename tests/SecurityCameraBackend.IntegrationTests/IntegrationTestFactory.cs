@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Security_Camera_Backend.Services.Mqtt;
 using Security_Camera_Backend.Services.Notifications;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -46,6 +47,9 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
 
     public FakeSmtpSender EmailSender { get; } = new();
 
+    /// <summary>Records every MQTT publish so the event-driven path needs no broker in tests.</summary>
+    public FakeMqttPublisher MqttPublisher { get; } = new();
+
     // Program reads DB_URL while registering services, i.e. before WebApplicationFactory can
     // apply ConfigureAppConfiguration callbacks. Process environment variables are therefore the
     // only override that is guaranteed to be visible to that code.
@@ -69,6 +73,11 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
         ["Smtp__Port"] = "1025",
         ["Smtp__FromAddress"] = "alerts@test.local",
         ["Alarm__DurationSeconds"] = "1",
+        // The publisher is replaced by FakeMqttPublisher in ConfigureWebHost (so no socket is ever
+        // opened), but it stays enabled so RealtimePublisher keeps building the wire documents.
+        ["Mqtt__Enabled"] = "true",
+        ["Mqtt__Host"] = "mosquitto",
+        ["Mqtt__TopicPrefix"] = "systems",
         ["ExternalAuth__UseStub"] = "true",
         ["ExternalAuth__StubAccounts__cam_admin_1__SystemId"] = "sys-001",
         ["ExternalAuth__StubAccounts__cam_admin_1__Password"] = FactoryAdmin1Password,
@@ -118,6 +127,11 @@ public sealed class IntegrationTestFactory : WebApplicationFactory<Program>, IAs
 
             services.RemoveAll<ISmtpSender>();
             services.AddSingleton<ISmtpSender>(EmailSender);
+
+            // The real publisher would try to reach a broker. The fake records the retained alarm
+            // document and the event summaries so the tests can assert on the wire payload.
+            services.RemoveAll<IMqttPublisherService>();
+            services.AddSingleton<IMqttPublisherService>(MqttPublisher);
         });
     }
 
