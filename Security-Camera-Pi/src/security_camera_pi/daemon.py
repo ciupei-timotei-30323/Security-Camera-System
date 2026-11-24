@@ -18,6 +18,7 @@ from .config import Config
 from .motion import MotionDetector
 from .preview import PreviewPusher
 from .queue import OfflineQueue, QueueProcessor
+from .streaming import RtspStreamer
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ class CaptureDaemon:
         self.motion_interval = motion_interval
         self.stop_event = threading.Event()
         self.detector = MotionDetector(config.motion_min_area)
+        # ``webrtc`` mode adds the H.264/RTSP publisher on top of the existing daemon. The JPEG
+        # preview keeps running (``PREVIEW_ENABLED``) so the dashboard's MJPEG fallback still has
+        # frames to show when WebRTC is unavailable; ``mjpeg`` mode is the original behaviour.
         self.preview_pusher = PreviewPusher(
             camera,
             backend,
@@ -60,6 +64,9 @@ class CaptureDaemon:
             backend,
             self.stop_event,
         )
+        self.streamer: RtspStreamer | None = None
+        if config.uses_webrtc and config.resolved_rtsp_url:
+            self.streamer = RtspStreamer(camera, config, self.stop_event)
         self._shutdown_lock = threading.Lock()
         self._shutdown_done = False
 
@@ -78,13 +85,27 @@ class CaptureDaemon:
                 "preview_interval": self.config.preview_interval,
                 "queue_max_mb": self.config.queue_max_mb,
                 "simulate_offline": self.backend.simulate_offline,
+                "stream_mode": self.config.stream_mode,
+                "rtsp_streaming": self.streamer is not None,
             },
         )
+
+        if self.config.uses_webrtc and self.streamer is None:
+            logger.warning(
+                "rtsp_streaming_disabled",
+                extra={
+                    "event": "rtsp_streaming_disabled",
+                    "reason": "STREAM_MODE=webrtc but no RTSP URL could be resolved",
+                },
+            )
 
         self.camera.start()
         try:
             self.queue_processor.start()
-            self.preview_pusher.start()
+            if self.streamer is not None:
+                self.streamer.start()
+            if self.config.preview_enabled:
+                self.preview_pusher.start()
             logger.info(
                 "capture_daemon_started",
                 extra={"event": "capture_daemon_started"},
@@ -105,7 +126,10 @@ class CaptureDaemon:
                 extra={"event": "capture_daemon_stopping"},
             )
 
-            for thread in (self.preview_pusher, self.queue_processor):
+            threads = [self.preview_pusher, self.queue_processor]
+            if self.streamer is not None:
+                threads.append(self.streamer)
+            for thread in threads:
                 if thread.ident is not None:
                     thread.join(timeout=5.0)
                     if thread.is_alive():

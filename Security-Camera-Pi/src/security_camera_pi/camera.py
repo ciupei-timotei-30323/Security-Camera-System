@@ -94,6 +94,24 @@ class Camera:
             expected_size=self._preview_size,
         )
 
+    def capture_stream_frame(self, size: tuple[int, int]) -> np.ndarray:
+        """Returns a BGR frame resized to ``size`` for the RTSP/H.264 publisher.
+
+        Uses the same ``main`` RGB888 (BGR-ordered) buffer as the still path and the same lock,
+        so the streamer never races the motion or preview loops for the camera.
+        """
+
+        width, height = size
+        if width <= 0 or height <= 0:
+            raise CameraError(f"invalid stream size {size}")
+
+        with self._lock:
+            frame = self._picam2.capture_array("main")
+        frame_to_bgr(frame, "BGR", expected_size=self._full_size)
+        if (width, height) == self._full_size:
+            return frame
+        return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+
     def capture_still_jpeg(self, quality: int = STILL_JPEG_QUALITY) -> bytes:
         with self._lock:
             frame = self._picam2.capture_array("main")
