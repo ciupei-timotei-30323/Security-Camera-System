@@ -7,8 +7,11 @@ import {
   RadioTowerIcon,
   RefreshCwIcon,
   ServerIcon,
+  ShieldAlertIcon,
+  ShieldCheckIcon,
   XCircleIcon,
 } from "lucide-react";
+import { useLiveUpdatesState } from "@/components/live-updates-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,6 +56,54 @@ function StatusChip({
             <XCircleIcon className="size-3.5 text-destructive" />
           ) : null}
           <span className="truncate">{detail ?? (online ? "Online" : "Offline")}</span>
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Arm/alarm state pushed over MQTT. Rendered only when the broker delivered a document, so the
+ * panel keeps its pre-existing shape on deployments without MQTT.
+ */
+function LiveArmStateChip() {
+  const live = useLiveUpdatesState();
+
+  if (!live || live.armed === null) {
+    return null;
+  }
+
+  const alarm = live.alarm;
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2",
+        alarm
+          ? "border-destructive/40 bg-destructive/10"
+          : "border-emerald-500/30 bg-emerald-500/10",
+      )}
+    >
+      <span
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-md",
+          alarm
+            ? "bg-destructive/15 text-destructive"
+            : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+        )}
+      >
+        {alarm ? (
+          <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        ) : (
+          <ShieldCheckIcon className="size-4" aria-hidden="true" />
+        )}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">
+          {alarm ? "Alarm active" : live.armed ? "Armed" : "Disarmed"}
+        </span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {live.line1?.trim() || (alarm ? "SUSPECT DETECTED" : "MQTT live")}
         </span>
       </span>
     </div>
@@ -137,6 +188,7 @@ export function StatusPanel() {
         <CardDescription>Camera, terminal and backend health.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        <LiveArmStateChip />
         <StatusChip
           label="Camera"
           online={status.camera.online}

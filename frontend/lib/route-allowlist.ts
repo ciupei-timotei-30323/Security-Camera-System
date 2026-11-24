@@ -47,6 +47,11 @@ const RULES: AllowlistRule[] = [
 
   { segments: ["away-mode-settings"], methods: ["GET", "PUT"] },
   { segments: ["settings", "away-mode"], methods: ["GET", "PUT"] },
+
+  // Realtime credentials (WHEP URL + stream token, MQTT-over-WebSockets URL). Served by the BFF
+  // itself in app/api/realtime/ticket/route.ts; listed here so the route surface stays in one
+  // place and the allowlist stays the single source of truth.
+  { segments: ["realtime", "ticket"], methods: ["GET"] },
 ];
 
 /** Routes that stream and therefore need long response/connect timeouts instead of JSON timeouts. */

@@ -12,6 +12,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EventCard } from "@/components/event-card";
 import { EventDialog } from "@/components/event-dialog";
+import { useLiveEvents, useLiveUpdatesState } from "@/components/live-updates-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,6 +58,14 @@ function EntranceLogContent({
   const latestTimestampRef = useRef(0);
 
   const eventsQuery = useEvents(suspectOnly);
+  const live = useLiveUpdatesState();
+  const liveConnected = live?.status === "connected";
+
+  // A detection summary on `systems/{id}/events` refreshes the log immediately; the 3 s poll in
+  // `useEvents` stays as the fallback when the broker is not configured or the socket dropped.
+  useLiveEvents(() => {
+    void eventsQuery.refetch();
+  });
 
   const items = useMemo(() => {
     const byId = new Map<number, DetectionEvent>();
@@ -131,7 +140,8 @@ function EntranceLogContent({
             <Badge variant="secondary">{total}</Badge>
           </h2>
           <p className="text-sm text-muted-foreground">
-            Newest first. Auto-refreshes every 3 seconds; click a card for the annotated frame.
+            Newest first. {liveConnected ? "Pushed live over MQTT" : "Auto-refreshes every 3 seconds"};
+            click a card for the annotated frame.
           </p>
         </div>
 
@@ -143,7 +153,7 @@ function EntranceLogContent({
               <span className="size-2 rounded-full bg-emerald-500/70" />
             )}
             <span className="text-xs text-muted-foreground">
-              {refreshing ? "Refreshing…" : "Auto-refresh · 3 s"}
+              {refreshing ? "Refreshing…" : liveConnected ? "Live · push" : "Auto-refresh · 3 s"}
             </span>
           </div>
 

@@ -8,14 +8,16 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test components/live-feed.test.ts lib/bff-security.test.ts"
+    "test": "node --experimental-strip-types --test components/live-feed.test.ts lib/bff-security.test.ts lib/live-updates.test.ts lib/realtime-ticket.test.ts lib/webrtc-player.test.ts"
   },
   "dependencies": {
+    "@babel/runtime": "^7.29.15",
     "@base-ui/react": "^1.9.0",
     "@tanstack/react-query": "^5.108.2",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
     "lucide-react": "^1.77.0",
+    "mqtt": "^5.16.1",
     "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",
