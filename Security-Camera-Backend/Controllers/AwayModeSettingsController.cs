@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Security_Camera_Backend.Contracts;
 using Security_Camera_Backend.Extensions;
+using Security_Camera_Backend.Services.Mqtt;
 using Security_Camera_Backend.Services.Settings;
 
 namespace Security_Camera_Backend.Controllers;
@@ -14,7 +15,9 @@ namespace Security_Camera_Backend.Controllers;
 [Route("api/away-mode-settings")]
 [Route("api/settings/away-mode")]
 [Authorize]
-public sealed class AwayModeSettingsController(IAwayModeSettingsService settingsService) : ControllerBase
+public sealed class AwayModeSettingsController(
+    IAwayModeSettingsService settingsService,
+    IRealtimePublisher realtimePublisher) : ControllerBase
 {
     /// <summary>
     /// Returns the current setting, creating the row with <c>isArmed = true</c> on first access.
@@ -37,10 +40,12 @@ public sealed class AwayModeSettingsController(IAwayModeSettingsService settings
         [FromBody] UpdateAwayModeSettingRequest request,
         CancellationToken ct)
     {
-        var setting = await settingsService.UpdateAsync(
-            User.GetRequiredSystemId(),
-            request,
-            ct);
+        var systemId = User.GetRequiredSystemId();
+        var setting = await settingsService.UpdateAsync(systemId, request, ct);
+
+        // Arming state changed: push the retained alarm document immediately so the ESP32 and any
+        // open dashboard reflect it without waiting for the next poll or detection.
+        await realtimePublisher.PublishAlarmStateAsync(systemId, ct);
 
         return Ok(setting);
     }

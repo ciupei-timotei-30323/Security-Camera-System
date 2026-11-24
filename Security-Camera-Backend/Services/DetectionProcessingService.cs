@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Security_Camera_Backend.Models;
 using Security_Camera_Backend.Services.Cv;
+using Security_Camera_Backend.Services.Mqtt;
 
 namespace Security_Camera_Backend.Services;
 
@@ -10,6 +11,7 @@ public sealed class DetectionProcessingService(
     ISystemStateService systemStateService,
     IAlarmStateStore alarmStateStore,
     INotificationDispatcher notificationDispatcher,
+    IRealtimePublisher realtimePublisher,
     ICaptureStorage captureStorage,
     ILogger<DetectionProcessingService> logger) : IDetectionProcessingService
 {
@@ -130,6 +132,16 @@ public sealed class DetectionProcessingService(
             // The terminal alarm must react immediately; only the e-mail fan-out is queued.
             alarmStateStore.Trigger(detectionEvent.SystemId);
             await DispatchSuspectAlertAsync(detectionEvent, ct);
+        }
+
+        // Every event gets a live summary so open dashboards refresh without polling. Publishing
+        // is best-effort: a broker outage must never fail an ingestion request.
+        await realtimePublisher.PublishEventAsync(detectionEvent, ct);
+
+        if (detectionEvent.IsSuspect)
+        {
+            // Re-publish the retained alarm document with the freshly extended window.
+            await realtimePublisher.PublishAlarmStateAsync(detectionEvent.SystemId, ct);
         }
 
         return DetectionProcessingResult.Saved(detectionEvent);

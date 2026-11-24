@@ -18,8 +18,6 @@ public sealed class DeviceController(
     IAlarmStateStore alarmStateStore,
     TimeProvider timeProvider) : ControllerBase
 {
-    private const int DisplayWidth = 16;
-
     /// <summary>
     /// Polled by an alert terminal. The API key must belong to an <see cref="DeviceType.AlertTerminal"/>
     /// device; camera keys are rejected.
@@ -58,13 +56,8 @@ public sealed class DeviceController(
             armed,
             alarm,
             alarmUntil,
-            ToDisplayLine(line1),
-            ToDisplayLine(string.Empty),
+            TerminalDisplay.Line(line1),
+            TerminalDisplay.BlankLine(),
             now));
     }
-
-    private static string ToDisplayLine(string value) =>
-        value.Length >= DisplayWidth
-            ? value[..DisplayWidth]
-            : value.PadRight(DisplayWidth);
 }

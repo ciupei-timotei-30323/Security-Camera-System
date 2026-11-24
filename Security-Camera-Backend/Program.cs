@@ -19,6 +19,7 @@ using Security_Camera_Backend.Services.Auth;
 using Security_Camera_Backend.Services.Camera;
 using Security_Camera_Backend.Services.Cv;
 using Security_Camera_Backend.Services.ExternalAuth;
+using Security_Camera_Backend.Services.Mqtt;
 using Security_Camera_Backend.Services.Notifications;
 using Security_Camera_Backend.Services.Security;
 using Security_Camera_Backend.Services.Settings;
@@ -97,6 +98,7 @@ try
     builder.Services.Configure<NotificationOptions>(builder.Configuration.GetSection(NotificationOptions.SectionName));
     builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.SectionName));
     builder.Services.Configure<AlarmOptions>(builder.Configuration.GetSection(AlarmOptions.SectionName));
+    builder.Services.Configure<MqttOptions>(builder.Configuration.GetSection(MqttOptions.SectionName));
     builder.Services.Configure<LoginRateLimitOptions>(builder.Configuration.GetSection(LoginRateLimitOptions.SectionName));
     builder.Services.Configure<LoginLockoutOptions>(builder.Configuration.GetSection(LoginLockoutOptions.SectionName));
     builder.Services.Configure<CorsOptions>(builder.Configuration.GetSection(CorsOptions.SectionName));
@@ -240,8 +242,15 @@ try
     builder.Services.AddSingleton<INotificationDispatcher, QueuedNotificationDispatcher>();
     builder.Services.AddSingleton<ISmtpSender, SmtpSender>();
     builder.Services.AddScoped<INotifier, EmailNotifier>();
+    builder.Services.AddScoped<INotifier, MqttNotifier>();
     builder.Services.AddHostedService<SuspectAlertDispatcher>();
     builder.Services.AddSingleton<IAlarmStateStore, AlarmStateStore>();
+
+    // Event-driven alerts: one MQTT client per process, plus a domain publisher that owns the
+    // retained alarm document and the delayed "alarm cleared" message.
+    builder.Services.AddSingleton<IMqttPublisherService, MqttPublisherService>();
+    builder.Services.AddSingleton<IRealtimePublisher, RealtimePublisher>();
+    builder.Services.AddSingleton<MediaMtxPathAuthorizer>();
 
     // Live preview is process-local: only one JPEG per system is retained.
     builder.Services.AddSingleton<ILatestFrameStore, LatestFrameStore>();
