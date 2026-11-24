@@ -1,0 +1,12 @@
+# PlatformIO build output
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Local secrets — copy include/config.example.h to include/config.h
+include/config.h
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store
