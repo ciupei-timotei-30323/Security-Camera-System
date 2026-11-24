@@ -14,7 +14,8 @@
 #define SYSTEM_ID "sys-001"
 
 // --- MQTT broker -------------------------------------------------------------------------------
-// Development: the compose.yaml mosquitto service, reachable from the LAN.
+// Development: the compose.yaml mosquitto service. It DOES publish 1883 to the host, so a LAN IP
+// works here (or a hostname if you have one).
 // Production:  expose mosquitto behind a TLS tunnel/proxy and use port 8883.
 #define MQTT_HOST "192.168.1.10"
 #define MQTT_PORT 1883
@@ -29,10 +30,14 @@
 #define MQTT_CLIENT_ID "alert-terminal-" SYSTEM_ID
 
 // --- HTTP fallback -----------------------------------------------------------------------------
-// GET /api/device/status when the broker is unreachable. The endpoint needs the Pi API key in
-// the X-Api-Key header and the tenant's SystemId in the path query string.
+// GET /api/device/status when the broker is unreachable. The endpoint needs the terminal's API key
+// in the X-Api-Key header; the backend resolves the tenant from that key.
+//
+// Unlike MQTT, the backend publishes NO host port in the compose stack, so point this at the
+// Tailscale sidecar name when the terminal is on the tailnet. A LAN address only works when you run
+// the backend yourself with `dotnet run` (see the root README).
 #define FALLBACK_ENABLED true
-#define FALLBACK_STATUS_URL "http://192.168.1.10:8080/api/device/status"
+#define FALLBACK_STATUS_URL "http://security-camera-backend:8080/api/device/status"
 #define FALLBACK_API_KEY "change-me-to-the-alert-terminal-api-key"
 #define FALLBACK_POLL_INTERVAL_MS 15000
 

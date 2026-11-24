@@ -13,6 +13,16 @@
 #   cv-service and the Raspberry Pi(s) are reachable only over Docker networking or the private
 #   Tailscale mesh (map remote sites in the dashboard's EDGE_BACKENDS_JSON).
 #
+# HOW THE PI REACHES THE BACKEND:
+#   The backend publishes no host port, so a Pi cannot use http://<lan-ip>:8080. Instead the
+#   `tailscale` sidecar below joins the tailnet from *inside the backend's network namespace*
+#   (`network_mode: service:security-camera-backend`). The backend already listens on 0.0.0.0
+#   (:8080), so it answers on the tailscale0 interface with no extra binding. Pis, ESP32
+#   terminals and remote dashboards then use http://$TS_HOSTNAME:8080 over the mesh:
+#       docker compose --profile tailscale up -d
+#   Nothing is exposed to the LAN, and the dashboard's EDGE_BACKENDS_JSON can point at the same
+#   tailnet name for remote sites.
+#
 # EVENT-DRIVEN ADDITIONS (explicit, documented exceptions to the "only dashboard is published"
 # rule):
 #   * `mosquitto` — MQTT broker. 1883 is published for the ESP32 terminals and the Pi LAN, 9001 for
@@ -104,6 +114,47 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
+
+
+  # Joins the tailnet from inside the backend's network namespace, so the backend becomes reachable
+  # at http://$TS_HOSTNAME:8080 without publishing a host port. Opt in explicitly:
+  #     docker compose --profile tailscale up -d
+  # It is in a profile rather than always-on so a deployment that does not need remote Pis keeps
+  # the exact previous process set (and does not fail when TS_AUTHKEY is unset).
+  tailscale:
+    image: tailscale/tailscale:stable
+    # Shares the backend's netns: tailscale0 appears next to eth0, and the backend's existing
+    # `http://+:8080` listener answers on it. This container therefore must NOT set `networks:`.
+    network_mode: "service:security-camera-backend"
+    profiles:
+      - tailscale
+    environment:
+      # Tagged + ephemeral key from https://login.tailscale.com/admin/settings/keys.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-security-camera-backend}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:-}
+    volumes:
+      # Node identity survives restarts, so the tailnet name and IP stay stable.
+      - tailscale-state:/var/lib/tailscale
+    # A kernel TUN device in the shared netns requires these two; they do not widen the backend.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      security-camera-backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "tailscale status >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
 
 
   dashboard:
@@ -291,3 +342,6 @@ volumes:
   # Holds the generated mosquitto password file and retained-message persistence.
   mosquitto-data:
     name: security-camera-mosquitto-data
+  # Tailscale node identity: keeps the backend's tailnet name/IP stable across restarts.
+  tailscale-state:
+    name: security-camera-tailscale-state

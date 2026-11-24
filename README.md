@@ -45,11 +45,35 @@ with `BACKEND_URL=http://security-camera-backend:8080` and the backend on the pr
 
 ### Network exposure
 
-Only `dashboard` publishes a host port (`3000`). The backend, PostgreSQL, `cv-service`,
-`external-auth-service` and the Raspberry Pi exist on the private Docker network or the private
-Tailscale mesh; none of them is reachable from the host, LAN or internet except through the BFF.
-`mailpit` is bound to `127.0.0.1` as a development-only exception. All containers run as non-root
-with `no-new-privileges`.
+Only `dashboard` publishes a host port (`3000`). The backend, PostgreSQL, `cv-service` and
+`external-auth-service` live on the private Docker network; none of them is reachable from the
+host, LAN or internet except through the BFF. `mailpit` is bound to `127.0.0.1` as a
+development-only exception. All containers run as non-root with `no-new-privileges`.
+
+`mosquitto` (`1883`, `9001`) and `mediamtx` (`8554`, `8889`, `8189/udp`) are deliberate published
+exceptions because the Pi and the ESP32 terminals live outside Docker; put `mqtts://` plus `wss://`
+in front of the broker before exposing it beyond a trusted LAN.
+
+#### Reaching the backend from the Raspberry Pi
+
+The backend publishes no host port, so a Pi **cannot** use `http://<lan-ip>:8080`. Instead, the
+`tailscale` service joins the tailnet from inside the backend's network namespace
+(`network_mode: service:security-camera-backend`), so the backend answers at
+`http://<TS_HOSTNAME>:8080` over the mesh with no extra binding and nothing added to the LAN.
+
+```bash
+# 1. create a tagged (ideally ephemeral) auth key: Tailscale admin -> Settings -> Keys
+# 2. put it in .env
+TS_AUTHKEY=tskey-auth-...            # required
+TS_HOSTNAME=security-camera-backend  # the tailnet name Pi clients will use
+# 3. start the mesh sidecar (it is opt-in via a compose profile)
+docker compose --profile tailscale up -d
+```
+
+The Pi then uses `BACKEND_URL=http://security-camera-backend:8080` and the ESP32 fallback uses
+`FALLBACK_STATUS_URL=http://security-camera-backend:8080/api/device/status`. Remote camera sites
+can point `EDGE_BACKENDS_JSON` at the same tailnet name, e.g.
+`{"sys-002":"http://edge-sys-002:8080"}`.
 
 Sign in with one of the seeded factory administrators from the `external-auth-service` seed:
 `cam_admin_1` / `factory-pass-sys-001` (system `sys-001`) or `cam_admin_2` /

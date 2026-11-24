@@ -19,6 +19,10 @@ Picamera2
 - Raspberry Pi 5 with a supported Camera Module and Raspberry Pi OS 64-bit (Bookworm or newer).
 - Python 3.11+.
 - A reachable backend and a camera API key (`PiAuth__Systems__<systemId>`/`PiDevices`).
+  The compose stack publishes no backend host port, so the Pi reaches it over the Tailscale
+  sidecar: `BACKEND_URL=http://security-camera-backend:8080` (see the root README, "Reaching the
+  backend from the Raspberry Pi"). A plain LAN IP only works when you run the backend yourself
+  with `dotnet run`.
 - No cloud SDK, face recognition or inbound listener is used.
 
 ## Install
@@ -49,7 +53,7 @@ Copy `.env.example` to `.env` and edit it:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BACKEND_URL` | required | Backend origin, for example `http://192.168.1.10:8080`; no trailing `/api` |
+| `BACKEND_URL` | required | Backend origin, for example `http://security-camera-backend:8080` (Tailscale sidecar) or `http://192.168.1.10:8080` for a locally run backend; no trailing `/api` |
 | `API_KEY` | required | Camera kit key, sent as `X-Api-Key`; never logged |
 | `MOTION_MIN_AREA` | `1500` | Largest contour area in the internal 320x180 motion image that counts as motion |
 | `COOLDOWN_SECONDS` | `8` | Motion is ignored for this long after a trigger |
