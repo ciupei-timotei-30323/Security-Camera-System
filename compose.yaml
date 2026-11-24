@@ -12,6 +12,15 @@
 #   Net effect: only the Next.js dashboard is publicly reachable. The backend, PostgreSQL,
 #   cv-service and the Raspberry Pi(s) are reachable only over Docker networking or the private
 #   Tailscale mesh (map remote sites in the dashboard's EDGE_BACKENDS_JSON).
+#
+# EVENT-DRIVEN ADDITIONS (explicit, documented exceptions to the "only dashboard is published"
+# rule):
+#   * `mosquitto` — MQTT broker. 1883 is published for the ESP32 terminals and the Pi LAN, 9001 for
+#     dashboard WebSockets. In production put both behind your reverse proxy/tunnel and require
+#     mqtts:// and wss:// instead of exposing them raw.
+#   * `mediamtx` — RTSP ingest (8554) and WebRTC WHEP signalling (8889) plus the ICE UDP port
+#     (8189/udp). Browsers must reach 8889/8189 directly; the Pi must reach 8554.
+#   Neither service is reachable from the internet unless you publish it deliberately.
 name: security-camera-backend
 
 services:
@@ -54,6 +63,13 @@ services:
       Smtp__FromAddress: ${Smtp__FromAddress:-alerts@security-camera.local}
       Smtp__FromName: ${Smtp__FromName:-Security Camera}
       Alarm__DurationSeconds: ${Alarm__DurationSeconds:-15}
+      # Event-driven alerts. The backend publishes retained alarm state and event summaries here.
+      Mqtt__Enabled: ${Mqtt__Enabled:-true}
+      Mqtt__Host: ${Mqtt__Host:-mosquitto}
+      Mqtt__Port: ${Mqtt__Port:-1883}
+      Mqtt__Username: ${MQTT_BACKEND_USER:-backend}
+      Mqtt__Password: ${MQTT_BACKEND_PASS:-change-me-backend}
+      Mqtt__TopicPrefix: ${Mqtt__TopicPrefix:-systems}
       # Factory-admin validation through the local external-auth-service (Neon-backed).
       ExternalAuth__UseStub: "false"
       ExternalAuth__BaseUrl: http://external-auth-service:3001
@@ -79,6 +95,8 @@ services:
       external-auth-service:
         condition: service_healthy
       mailpit:
+        condition: service_started
+      mosquitto:
         condition: service_started
     restart: unless-stopped
     # Container hardening: unprivileged user (set in the Dockerfile) + no new privileges.
@@ -112,6 +130,12 @@ services:
       # Set to true only behind a proxy that overwrites X-Forwarded-For / CF-Connecting-IP
       # (Cloudflare, Traefik, Caddy). Forwarded client IPs feed the backend login limiter.
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      # Public origin the BROWSER uses for MediaMTX WHEP playback. Empty = MJPEG fallback.
+      MEDIAMTX_PUBLIC_URL: ${MEDIAMTX_PUBLIC_URL:-}
+      # Public MQTT-over-WebSockets URL the BROWSER connects to. Empty = polling fallback.
+      MQTT_PUBLIC_WS_URL: ${MQTT_PUBLIC_WS_URL:-}
+      MQTT_PUBLIC_USER: ${MQTT_PUBLIC_USER:-dashboard}
+      MQTT_PUBLIC_PASS: ${MQTT_PUBLIC_PASS:-change-me-dashboard}
     # The ONLY service published to the host/public ingress.
     ports:
       - "3000:3000"
@@ -187,6 +211,70 @@ services:
     security_opt:
       - no-new-privileges:true
 
+
+  # MQTT broker for retained alarm state and live event notifications.
+  # 1883 = backend + ESP32 terminals (TCP), 9001 = dashboard over WebSockets.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    # Published deliberately: the Pi and the ESP32 terminals live outside Docker. In production
+    # terminate TLS in front of these ports (mqtts://8883, wss://9001) and do not expose them raw.
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    environment:
+      MQTT_BACKEND_USER: ${MQTT_BACKEND_USER:-backend}
+      MQTT_BACKEND_PASS: ${MQTT_BACKEND_PASS:-change-me-backend}
+      MQTT_CLIENT_USER: ${MQTT_CLIENT_USER:-dashboard}
+      MQTT_CLIENT_PASS: ${MQTT_CLIENT_PASS:-change-me-dashboard}
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
+      - ./mosquitto/entrypoint.sh:/mosquitto/entrypoint.sh:ro
+      # Generated password file and broker persistence survive container restarts.
+      - mosquitto-data:/mosquitto/data
+    entrypoint: ["/bin/sh", "/mosquitto/entrypoint.sh"]
+    networks:
+      - internal
+    healthcheck:
+      # A tiny publish/subscribe round-trip proves the broker accepts authenticated clients.
+      test:
+        [
+          "CMD-SHELL",
+          "mosquitto_sub -h 127.0.0.1 -p 1883 -u \"$$MQTT_BACKEND_USER\" -P \"$$MQTT_BACKEND_PASS\" -t 'systems/+/alarm' -C 1 -W 3 >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+
+  # RTSP ingest + WebRTC (WHEP) media relay. Video never transits Next.js.
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    ports:
+      - "8554:8554" # RTSP publish from the Raspberry Pi
+      - "8889:8889" # WebRTC WHEP signalling (browser)
+      - "8189:8189/udp" # WebRTC ICE media
+    volumes:
+      - ./mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    networks:
+      - internal
+    depends_on:
+      security-camera-backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/mediamtx", "--help"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
 networks:
   # Public-facing: only the dashboard joins this one.
   edge:
@@ -200,3 +288,6 @@ networks:
 volumes:
   captures:
     name: security-camera-captures
+  # Holds the generated mosquitto password file and retained-message persistence.
+  mosquitto-data:
+    name: security-camera-mosquitto-data

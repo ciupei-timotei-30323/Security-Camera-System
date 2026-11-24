@@ -1,0 +1,15 @@
+# Topic ACLs. The `user` names must match the credentials created by entrypoint.sh.
+#
+# Backend: owns ingestion and alert publishing, so it needs read/write on the whole systems/# tree.
+# Dashboards: read-only, and only the two topics the UI actually consumes. A dashboard credential
+# can never publish, which means a compromised browser session cannot forge an alarm.
+
+user backend
+topic readwrite systems/#
+
+user dashboard
+topic read systems/+/alarm
+topic read systems/+/events
+
+# The ESP32 terminals use the dashboard credentials in the reference deployment. If you give each
+# terminal its own account, add a `user <name>` block with the same two read rules.

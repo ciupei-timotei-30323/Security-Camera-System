@@ -1,0 +1,66 @@
+# MediaMTX — RTSP ingest + WebRTC (WHEP) egress for the Security Camera system.
+#
+# Flow: Raspberry Pi 5 pushes H.264 over RTSP to :8554/<systemId>; the browser plays the same path
+# over WebRTC via WHEP at :8889/<systemId>/whep. Video never transits Next.js.
+#
+# Authorization is delegated to the ASP.NET Core backend, so the multi-tenant rule lives in one
+# place: a camera API key may publish only its own system path, and a dashboard JWT may read only
+# the system named in its `system_id` claim.
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9997
+
+# --- RTSP ingest (Raspberry Pi) --------------------------------------------------------------
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp, udp]
+rtspEncryption: "no"
+
+# --- WebRTC / WHEP egress (browser) ----------------------------------------------------------
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: "no"
+webrtcServerKey: ""
+webrtcServerCert: ""
+webrtcAllowOrigin: "*"
+# Single UDP port for ICE media. Mapping one port instead of a range keeps the compose port list
+# small and works behind most NATs; the public STUN server lets the browser discover its own
+# reflexive address.
+webrtcICEUDPMuxAddress: :8189
+webrtcICEHostNAT1To1IPs: []
+webrtcICEServers2:
+  - url: stun:stun.cloudflare.com:3478
+# Plain UDP is enough inside the LAN. Set webrtcIPsFromInterfaces to true when the browser and the
+# server are on different subnets and the host has multiple interfaces.
+webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfacesList: []
+
+# --- RTMP/HLS/SRT are not used ---------------------------------------------------------------
+rtmp: no
+hls: no
+srt: no
+
+# --- External HTTP authentication ------------------------------------------------------------
+# MediaMTX posts {user,password,token,ip,action,path,protocol,id,query} and expects 200 or 401.
+authMethod: http
+authHTTPAddress: http://security-camera-backend:8080/api/internal/mediamtx-auth
+# The backend has no public TLS endpoint; it lives on the private Docker network.
+authHTTPExclude: []
+
+# --- Paths ------------------------------------------------------------------------------------
+# Every path is created on demand and named after the SystemId (sys-001, sys-002, ...). MediaMTX
+# treats the path name as the tenant identifier; the backend webhook enforces the match.
+paths:
+  all_others:
+    # H.264 from the Pi is already hardware-encoded, so no transcoding is needed.
+    source: publisher
+    # Keep the stream available for a short while after the publisher disconnects so a browser that
+    # is mid-handshake does not fail on a brief Pi reconnect.
+    sourceOnDemand: no
+    # Readers cannot start a stream; only the Pi publishing can.
+    runOnDemand: no
+    # Low-latency: do not buffer or re-encode.
+    maxReaders: 0
