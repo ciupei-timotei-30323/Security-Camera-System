@@ -22,15 +22,16 @@ rtspEncryption: "no"
 # --- WebRTC / WHEP egress (browser) ----------------------------------------------------------
 webrtc: yes
 webrtcAddress: :8889
-webrtcEncryption: "no"
+# MediaMTX parses this as a Go bool (unlike rtspEncryption, which is a string alias).
+webrtcEncryption: false
 webrtcServerKey: ""
 webrtcServerCert: ""
-webrtcAllowOrigin: "*"
+webrtcAllowOrigins: ["*"]
 # Single UDP port for ICE media. Mapping one port instead of a range keeps the compose port list
 # small and works behind most NATs; the public STUN server lets the browser discover its own
 # reflexive address.
-webrtcICEUDPMuxAddress: :8189
-webrtcICEHostNAT1To1IPs: []
+webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: []
 webrtcICEServers2:
   - url: stun:stun.cloudflare.com:3478
 # Plain UDP is enough inside the LAN. Set webrtcIPsFromInterfaces to true when the browser and the
@@ -42,6 +43,8 @@ webrtcIPsFromInterfacesList: []
 rtmp: no
 hls: no
 srt: no
+# Media MoQ (HTTP/2 + QUIC on 8892/8893) is unused and would generate a self-signed cert.
+moq: no
 
 # --- External HTTP authentication ------------------------------------------------------------
 # MediaMTX posts {user,password,token,ip,action,path,protocol,id,query} and expects 200 or 401.
@@ -60,7 +63,6 @@ paths:
     # Keep the stream available for a short while after the publisher disconnects so a browser that
     # is mid-handshake does not fail on a brief Pi reconnect.
     sourceOnDemand: no
-    # Readers cannot start a stream; only the Pi publishing can.
-    runOnDemand: no
-    # Low-latency: do not buffer or re-encode.
+    # Readers cannot start a stream; only the Pi publishing can. (`runOnDemand` is a command
+    # string in MediaMTX, not a boolean — leaving it unset means "never run on demand".)
     maxReaders: 0

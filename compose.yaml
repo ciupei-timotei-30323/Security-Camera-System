@@ -287,11 +287,13 @@ services:
     networks:
       - internal
     healthcheck:
-      # A tiny publish/subscribe round-trip proves the broker accepts authenticated clients.
+      # Proves the broker accepts an authenticated client and that the ACL allows the subscription.
+      # -E exits as soon as the broker acknowledges the SUBSCRIBE; -C 1 would wait for a message that
+      # may never be published, which is why the old check reported `unhealthy` on a healthy broker.
       test:
         [
           "CMD-SHELL",
-          "mosquitto_sub -h 127.0.0.1 -p 1883 -u \"$$MQTT_BACKEND_USER\" -P \"$$MQTT_BACKEND_PASS\" -t 'systems/+/alarm' -C 1 -W 3 >/dev/null 2>&1 || exit 1",
+          "mosquitto_sub -h 127.0.0.1 -p 1883 -u \"$$MQTT_BACKEND_USER\" -P \"$$MQTT_BACKEND_PASS\" -t 'systems/+/alarm' -E -W 3 >/dev/null 2>&1 || exit 1",
         ]
       interval: 30s
       timeout: 5s
@@ -317,7 +319,9 @@ services:
       security-camera-backend:
         condition: service_started
     healthcheck:
-      test: ["CMD", "/mediamtx", "--help"]
+      # Validates the actual config file, so a YAML type error (which makes MediaMTX exit before it
+      # ever binds :8554) shows up as `unhealthy` instead of silently crash-looping.
+      test: ["CMD", "/mediamtx", "--validate-conf=/mediamtx.yml"]
       interval: 60s
       timeout: 5s
       retries: 3

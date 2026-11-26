@@ -305,6 +305,19 @@ protocol, id, query }` payload and enforces tenant isolation:
   expiry and revoked `jti` are validated and its `system_id` claim must equal the path. `200 OK`
   with `{ "expireAt": "<jwt exp, ISO-8601>" }` on match, `401` otherwise.
 
+MediaMTX refuses to start when any key in `mediamtx.yml` has the wrong YAML type, and because it
+is `restart: unless-stopped` the symptom is a silent `Restarting` container — no `:8554` listener,
+the Pi fails with `BrokenPipeError`, and the dashboard shows an empty player. Two keys are easy to
+get wrong: `webrtcEncryption` is a **boolean** (`false`), while `rtspEncryption` is a **string**
+(`"no"`); and `paths.<name>.runOnDemand` is a **command string**, not a boolean — omit it to mean
+"never run on demand". Check with:
+
+```bash
+docker compose logs mediamtx --tail 5      # ERR: json: cannot unmarshal ...
+ss -ltnp | grep -E '8554|8889'             # both must listen
+docker compose exec mediamtx /mediamtx --validate-conf=/mediamtx.yml
+```
+
 ### Real-time dashboard credentials
 
 `GET /api/realtime/ticket` is served by the BFF itself and is never proxied upstream. It decrypts
