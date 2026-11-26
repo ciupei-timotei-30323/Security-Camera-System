@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import io
+import logging
 import threading
 
 import cv2
@@ -14,6 +16,31 @@ from security_camera_pi.streaming import (
     StreamConfigurationError,
     build_ffmpeg_command,
 )
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self, sink: list[logging.LogRecord]) -> None:
+        super().__init__()
+        self.sink = sink
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.sink.append(record)
+
+
+@contextlib.contextmanager
+def _capture_logs(name: str):
+    """Collects LogRecords; `caplog` is broken in this environment's pytest build."""
+    records: list[logging.LogRecord] = []
+    logger = logging.getLogger(name)
+    handler = _ListHandler(records)
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
 
 
 def _config(**overrides: object) -> Config:
@@ -162,8 +189,9 @@ class _FakeStdin(io.BytesIO):
 class _FakeProcess:
     """Minimal Popen stand-in: one frame then a dead pipe."""
 
-    def __init__(self, stdin: _FakeStdin) -> None:
+    def __init__(self, stdin: _FakeStdin, stderr=None) -> None:
         self.stdin = stdin
+        self.stderr = stderr
         self.returncode: int | None = None
 
     def poll(self) -> int | None:
@@ -279,3 +307,196 @@ def test_streamer_command_uses_configured_dimensions() -> None:
     assert command[command.index("-g") + 1] == "15"
     # cv2 import keeps the headless codec path exercised in CI (no display needed).
     assert cv2.__version__
+
+
+def test_diagnose_ffmpeg_error_explains_auth_and_network_failures() -> None:
+    from security_camera_pi.streaming import diagnose_ffmpeg_error
+
+    unauthorized = (
+        "[rtsp @ 0x1] method DESCRIBE failed: 401 Unauthorized\n"
+        "rtsp://pi:***@mediamtx:8554/sys-001: Server returned 401 Unauthorized "
+        "(authorization failed)"
+    )
+    hint = diagnose_ffmpeg_error(unauthorized)
+    assert hint is not None
+    assert "MediaMTX" in hint and "API_KEY" in hint and "SYSTEM_ID" in hint
+
+    refused = "[tcp @ 0x2] Connection refused\nCould not open connection"
+    refused_hint = diagnose_ffmpeg_error(refused)
+    assert refused_hint is not None and "RTSP_HOST" in refused_hint
+
+    encoder = "Unknown encoder 'h264_v4l2m2m'"
+    encoder_hint = diagnose_ffmpeg_error(encoder)
+    assert encoder_hint is not None and "libx264" in encoder_hint
+
+    assert diagnose_ffmpeg_error("something entirely unrelated") is None
+
+
+def test_redact_secrets_hides_key_and_url_userinfo() -> None:
+    from security_camera_pi.streaming import redact_secrets
+
+    text = (
+        "rtsp://pi:camera-key@mediamtx:8554/sys-001: 401 Unauthorized "
+        "(authorization failed) key=camera-key"
+    )
+
+    redacted = redact_secrets(text, ["camera-key"])
+
+    assert "camera-key" not in redacted
+    assert "rtsp://***@mediamtx:8554/sys-001" in redacted
+
+
+def test_list_encoders_parses_ffmpeg_output() -> None:
+    from security_camera_pi.streaming import list_encoders
+
+    class _Result:
+        returncode = 0
+        stdout = (
+            "Encoders:\n"
+            " V..... = Video\n"
+            " ------\n"
+            " V....D libx264              libx264 H.264 / AVC (codec h264)\n"
+            " V....D h264_v4l2m2m         V4L2 mem2mem H.264 encoder (codec h264)\n"
+            " A....D aac                  AAC (Advanced Audio Coding)\n"
+        )
+
+    def _runner(*_args: object, **_kwargs: object) -> _Result:
+        return _Result()
+
+    assert list_encoders("ffmpeg", runner=_runner) == {"libx264", "h264_v4l2m2m", "aac"}
+
+
+def test_list_encoders_returns_none_when_ffmpeg_is_missing() -> None:
+    from security_camera_pi.streaming import list_encoders
+
+    def _runner(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("ffmpeg")
+
+    assert list_encoders("ffmpeg", runner=_runner) is None
+
+
+def test_streamer_falls_back_to_libx264_when_encoder_missing() -> None:
+    class _Result:
+        returncode = 0
+        stdout = " V....D libx264   libx264 H.264 / AVC (codec h264)\n"
+
+    def _runner(*_args: object, **_kwargs: object) -> _Result:
+        return _Result()
+
+    with _capture_logs("security_camera_pi.streaming") as records:
+        streamer = RtspStreamer(
+            object(),  # type: ignore[arg-type]
+            _config(stream_ffmpeg_encoder="h264_v4l2m2m"),
+            threading.Event(),
+            runner=_runner,
+        )
+        streamer._fallback_encoder_if_missing()
+
+    assert streamer.config.stream_ffmpeg_encoder == "libx264"
+    # The operator must learn why the configured encoder was ignored.
+    warnings = [r for r in records if getattr(r, "event", "") == "ffmpeg_encoder_unavailable"]
+    assert warnings and "libx264" in warnings[0].hint
+
+    # A supported encoder is left alone and nothing is logged.
+    with _capture_logs("security_camera_pi.streaming") as quiet:
+        keep = RtspStreamer(
+            object(),  # type: ignore[arg-type]
+            _config(stream_ffmpeg_encoder="libx264"),
+            threading.Event(),
+            runner=_runner,
+        )
+        keep._fallback_encoder_if_missing()
+
+    assert keep.config.stream_ffmpeg_encoder == "libx264"
+    assert quiet == []
+
+
+def test_streamer_keeps_encoder_when_ffmpeg_probe_fails() -> None:
+    def _runner(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("ffmpeg")
+
+    with _capture_logs("security_camera_pi.streaming") as records:
+        streamer = RtspStreamer(
+            object(),  # type: ignore[arg-type]
+            _config(stream_ffmpeg_encoder="h264_v4l2m2m"),
+            threading.Event(),
+            runner=_runner,
+        )
+        streamer._fallback_encoder_if_missing()
+
+    assert streamer.config.stream_ffmpeg_encoder == "h264_v4l2m2m"
+    assert [r.event for r in records] == ["ffmpeg_encoders_unavailable"]
+
+
+def test_publisher_logs_ffmpeg_stderr_and_hint_on_dead_pipe() -> None:
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    stop = threading.Event()
+
+    class _Stderr(io.BytesIO):
+        @property
+        def closed(self) -> bool:  # keep _terminate's close() harmless
+            return False
+
+    def _break() -> None:
+        stop.set()
+        raise BrokenPipeError("rtsp socket closed")
+
+    class _Process(_FakeProcess):
+        def __init__(self) -> None:
+            super().__init__(_FakeStdin(_break))
+            self.stderr = _Stderr(
+                b"[rtsp @ 0x1] method ANNOUNCE failed: 401 Unauthorized\n"
+                b"rtsp://pi:camera-key@mediamtx:8554/sys-001: Server returned 401\n"
+            )
+
+    with _capture_logs("security_camera_pi.streaming") as records:
+        streamer = RtspStreamer(
+            _FakeCamera(frame),  # type: ignore[arg-type]
+            _config(),
+            stop,
+            command=["ffmpeg"],
+            popen=lambda *_a, **_k: _Process(),  # type: ignore[arg-type]
+        )
+        streamer._publish_once(["ffmpeg"])
+
+    closed = [r for r in records if getattr(r, "event", "") == "rtsp_publisher_pipe_closed"]
+    assert closed, [getattr(r, "event", r.getMessage()) for r in records]
+    details = closed[0]
+    assert "401 Unauthorized" in details.ffmpeg_stderr
+    # Never leak the Pi API key through ffmpeg's stderr echo.
+    assert "camera-key" not in details.ffmpeg_stderr
+    assert "MediaMTX" in details.hint
+
+
+def test_repeated_identical_failures_are_logged_once() -> None:
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    stop = threading.Event()
+
+    class _Stderr(io.BytesIO):
+        @property
+        def closed(self) -> bool:
+            return False
+
+    def _break() -> None:
+        # Every write fails: the publisher is already dead, exactly like a 401 at startup.
+        raise BrokenPipeError("rtsp socket closed")
+
+    class _Process(_FakeProcess):
+        def __init__(self) -> None:
+            super().__init__(_FakeStdin(_break))
+            self.stderr = _Stderr(b"[tcp @ 0x2] Connection refused\n")
+
+    with _capture_logs("security_camera_pi.streaming") as records:
+        streamer = RtspStreamer(
+            _FakeCamera(frame),  # type: ignore[arg-type]
+            _config(),
+            stop,
+            command=["ffmpeg"],
+            popen=lambda *_a, **_k: _Process(),  # type: ignore[arg-type]
+        )
+        streamer._publish_once(["ffmpeg"])
+        streamer._publish_once(["ffmpeg"])
+
+    reasons = [r.event for r in records if getattr(r, "event", "")]
+    assert reasons.count("rtsp_publisher_pipe_closed") == 1
+    assert reasons.count("rtsp_publisher_pipe_closed_repeat") == 1

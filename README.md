@@ -94,12 +94,14 @@ queue/rejected-file behaviour.
 
 `STREAM_MODE` selects the live video path (`webrtc` by default, `mjpeg` as the fallback):
 
-- `webrtc` — the daemon runs a second `Picamera2` camera configuration that encodes H.264
-  (`H264Encoder` + `FfmpegOutput`) and pushes it over RTSP to
-  `rtsp://<MQTT/RTSP user>:${PI_API_KEY}@${BACKEND_HOST}:8554/${SYSTEM_ID}` with
-  `-preset ultrafast -tune zerolatency -g 30 -f rtsp -rtsp_transport tcp`. The publisher thread
-  restarts automatically when the RTSP socket drops; motion detection and `POST /api/events`
-  uploads are unchanged.
+- `webrtc` — the daemon runs a second `Picamera2` camera configuration and pipes raw BGR frames
+  into an `ffmpeg` child that encodes H.264 and pushes it over RTSP to
+  `rtsp://<RTSP_USER>:${API_KEY}@${RTSP_HOST}:${RTSP_PORT}/${SYSTEM_ID}` with
+  `-preset ultrafast -tune zerolatency -g <fps> -f rtsp -rtsp_transport tcp`. The publisher thread
+  restarts automatically when the RTSP socket drops, falls back to `libx264` when
+  `STREAM_FFMPEG_ENCODER` is not in the local ffmpeg build, and logs ffmpeg's own stderr plus a
+  hint when the publish is refused; motion detection and `POST /api/events` uploads are unchanged.
+  See the [RTSP troubleshooting table](Security-Camera-Pi/README.md#troubleshooting-the-rtsp-feed).
 - `mjpeg` — the original `POST /api/camera/frame` loop.
 
 See [`Security-Camera-Pi/README.md`](Security-Camera-Pi/README.md) for the streaming settings.

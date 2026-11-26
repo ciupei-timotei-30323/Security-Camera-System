@@ -177,6 +177,31 @@ journalctl -u security-camera-pi -f
 The service runs as `pi:pi` with the `video` group, restarts on failure and sends `SIGTERM` on
 shutdown. The daemon stops its threads, closes the camera and leaves pending queue files intact.
 
+## Troubleshooting the RTSP feed
+
+When the dashboard shows no camera feed, the daemon log tells you which of the three hops failed.
+The Pi publishes H.264 with ffmpeg into MediaMTX (`rtsp://<RTSP_USER>:<API_KEY>@<RTSP_HOST>:
+<RTSP_PORT>/<SYSTEM_ID>`), and the browser reads it back through the dashboard's WebRTC player.
+
+**`rtsp_publisher_pipe_closed` / `rtsp_publisher_exited`** — ffmpeg died, so the next frame write
+hit a closed pipe. Since this version the log line also carries `ffmpeg_stderr` (a redacted tail of
+ffmpeg's own output) and a `hint` naming the cause:
+
+| `hint` / `ffmpeg_stderr` | Fix |
+|---|---|
+| `MediaMTX rejected the publish (401)` | `API_KEY` in `pi.env` is not the backend's key for this `SYSTEM_ID`. With `scripts/init_env.py`, re-run it (it keeps them in sync) and re-push with `--push-pi`. Also confirm `compose.yaml` forwards `PiAuth__Systems__<id>` for systems other than `sys-001`/`sys-002`. |
+| `MediaMTX is not reachable at RTSP_HOST:RTSP_PORT` | Wrong `RTSP_HOST` (the Docker host's LAN address, not `localhost` from the Pi), or port 8554 not reachable. `nc -vz <host> 8554` from the Pi. |
+| `ffmpeg cannot use the configured encoder` | `STREAM_FFMPEG_ENCODER` is missing from this ffmpeg build; it now falls back to `libx264` automatically. |
+| `ffmpeg exited without a message` | Reproduce by hand with the same `STREAM_*`/`RTSP_*` values, `loglevel error` replaced with `-loglevel verbose`. |
+
+**`ffmpeg_encoder_unavailable`** — informational: `h264_v4l2m2m` is absent, so software `libx264`
+is used (higher CPU, still fine at 720p15 on a Pi 5). Check what your build offers with
+`ffmpeg -hide_banner -encoders | grep h264`.
+
+**ffmpeg is running but the dashboard stays black** — the publish side works, so look at the read
+side: MediaMTX must be reachable from the browser (`MEDIAMTX_PUBLIC_URL` / WebRTC port 8889 and
+UDP 8189), and read auth must pass for the `dashboard` MQTT/MediaMTX client in `.env`.
+
 ## Tests
 
 The queue suite uses a local mock HTTP server and does not need a camera:
