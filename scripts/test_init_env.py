@@ -38,6 +38,12 @@ REAL_NEON = (
 )
 
 
+def test_script_starts_with_shebang() -> None:
+    """A leading space made `scripts/init_env.py` run as a shell script: 'word unexpected'."""
+    raw = (REPO_ROOT / "scripts" / "init_env.py").read_bytes()
+    assert raw.startswith(b"#!/usr/bin/env python3\n"), raw[:40]
+
+
 @pytest.fixture()
 def repo(tmp_path: Path) -> Path:
     """Minimal repository skeleton accepted by main()."""

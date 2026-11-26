@@ -1,4 +1,4 @@
- #!/usr/bin/env python3
+#!/usr/bin/env python3
 """Provision and synchronize every environment/config file in this repository.
 
 Generates and keeps in sync:
