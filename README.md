@@ -34,7 +34,7 @@ Local development:
 
 ```bash
 cd frontend
-cp .env.example .env.local   # BACKEND_URL=http://localhost:8080
+cp .env.example .env.local   # BACKEND_URL=http://localhost:8080 (or: scripts/init_env.py)
 npm install
 npm run dev                  # http://localhost:3000
 ```
@@ -442,10 +442,78 @@ content type, before anything is written to disk.
 kits (`cam_admin_1` → `sys-001`, `cam_admin_2` → `sys-002`). The external service seeds the same
 defaults into Neon. Never use the sample passwords in production.
 
+### Provisioning every environment file
+
+[`scripts/init_env.py`](scripts/init_env.py) generates and keeps in sync every secret-bearing file
+in one pass (standard library only, Python 3.9+):
+
+| File | Consumed by |
+| --- | --- |
+| `.env` | `compose.yaml`, the backend, `mosquitto`, `mediamtx`, the `tailscale` sidecar |
+| `external-auth-service/.env` | the seed script and direct Node runs |
+| `frontend/.env.local` | `next dev` on the host |
+| `dist/devices/<systemId>/pi.env` | `/etc/security-camera-pi.env` on the Pi (systemd `EnvironmentFile`) |
+| `dist/devices/<systemId>/config.h` | `esp32-alert-terminal/include/config.h` |
+
+```bash
+scripts/init_env.py                          # idempotent: fills only what is missing
+scripts/init_env.py --systems sys-001,sys-002
+scripts/init_env.py --non-interactive        # CI: no prompts, values from the environment
+scripts/init_env.py --rotate                 # new secrets everywhere (see the warning below)
+scripts/init_env.py --check                  # verify mode 600, .gitignore, placeholders, sync
+scripts/init_env.py --push-pi pi@cam-001 --system sys-001
+scripts/init_env.py --flash-esp32 --system sys-001
+```
+
+What it generates and what it asks for:
+
+- **Generated** with `secrets.token_urlsafe(32)` when missing: `Jwt__Secret`, `BFF_SESSION_SECRET`,
+  `INTERNAL_API_SECRET`, `MQTT_BACKEND_PASS`, `MQTT_CLIENT_PASS`, a Pi key per system
+  (`PiAuth__ApiKey` for `PiAuth__DefaultSystemId`, `sys-001` unless pinned, and
+  `PiAuth__Systems__<id>` for every other system), a terminal key per system
+  (`PiAuth__AlertTerminalSystems__<id>`) and the factory-admin seed passwords. Values that already
+  exist and are not repository placeholders are preserved verbatim, comments included.
+- **Asked for** (they cannot be generated): `NEON_DB_URL`, `TS_AUTHKEY`, `MEDIAMTX_PUBLIC_URL`,
+  `MQTT_PUBLIC_WS_URL`, the LAN address the Pi/ESP32 dial, and the Wi-Fi SSID/password. `DB_URL` is
+  derived from `NEON_DB_URL` (Neon's `sslmode=require` becomes Npgsql's `SSL Mode=VerifyFull`) unless
+  it is already set. An empty answer keeps the shown default; `--non-interactive` never prompts and
+  reads missing values from the process environment instead. An explicitly empty value already in
+  `.env` (`MEDIAMTX_PUBLIC_URL=`, `MQTT_PUBLIC_WS_URL=`, `TS_AUTHKEY=`) means "disabled" and is
+  never replaced by a default.
+- `INTERNAL_API_SECRET` is written as `ExternalAuth__InternalSecret` in the root `.env` and into
+  `external-auth-service/.env`; `BFF_SESSION_SECRET` and `INTERNAL_API_SECRET` are mirrored into
+  `frontend/.env.local`. `SEED_PI_API_KEY_SYS_00N` always equals the backend's key for that system so
+  a re-seed cannot desynchronize a Pi.
+- Every generated file is mode `0600`, `dist/` is added to `.gitignore` when missing, and the script
+  fails rather than leaving a `dev-*`, `factory-pass-*` or `change-me*` value behind (those make
+  `ProductionSecretValidator` refuse to boot). `Admin__DeviceCode` is never rotated because it is the
+  built-in admin's stored password.
+
+Its own tests run without Docker, network access or a database, against a temporary repository
+skeleton:
+
+```bash
+python3 -m pytest scripts/test_init_env.py
+```
+
+`--rotate` changes the MQTT passwords, so the broker has to reseed its password file — it only does
+that on first start of an empty volume:
+
+```bash
+docker compose rm -sf mosquitto
+docker volume rm security-camera-mosquitto-data
+docker compose up -d mosquitto
+```
+
+Rotating also invalidates every `bff_session` cookie, requires re-pushing each `pi.env` / re-flashing
+each ESP32, and needs the `INTERNAL_API_SECRET` Cloudflare secret updated
+(`npx wrangler secret put INTERNAL_API_SECRET`) plus a fresh `npm run seed`.
+
 ### Running the external auth service locally
 
-1. Set `NEON_DB_URL` and a shared `INTERNAL_API_SECRET` in the root `.env` (used by Compose), and
-   `DATABASE_URL` + the same `INTERNAL_API_SECRET` in `external-auth-service/.env` (used by the
+1. Run `scripts/init_env.py` (see above); it writes `NEON_DB_URL` and a shared
+   `INTERNAL_API_SECRET` in the root `.env` (used by Compose) and `DATABASE_URL` + the same
+   `INTERNAL_API_SECRET` in `external-auth-service/.env` (used by the
    seed script and direct Node runs).
 2. Create the `factory_kits` table and upsert the sample kits:
 

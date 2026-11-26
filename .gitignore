@@ -17,3 +17,10 @@
 /tests/**/bin/
 /tests/**/obj/
 */.idea/
+
+# Per-device provisioning output from scripts/init_env.py: pi.env holds the Pi API key and
+# config.h holds the Wi-Fi password and MQTT credentials.
+/dist/
+
+# Bytecode from scripts/init_env.py
+/scripts/__pycache__/
