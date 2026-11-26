@@ -482,6 +482,12 @@ What it generates and what it asks for:
   reads missing values from the process environment instead. An explicitly empty value already in
   `.env` (`MEDIAMTX_PUBLIC_URL=`, `MQTT_PUBLIC_WS_URL=`, `TS_AUTHKEY=`) means "disabled" and is
   never replaced by a default.
+- The LAN address (`RTSP_HOST` in `pi.env`, `MQTT_HOST` in `config.h`) is remembered: with no
+  flag it is taken from an existing `pi.env`/`config.h`, else from `MEDIAMTX_PUBLIC_URL` /
+  `MQTT_PUBLIC_WS_URL`, else prompted. Passing `--lan-host` (or typing an address when prompted)
+  **overrides** a wrong stored value everywhere instead of silently keeping it — re-run
+  `scripts/init_env.py --lan-host <correct-ip>` to repair a stale address, then re-push the Pi
+  and re-flash the terminal.
 - `INTERNAL_API_SECRET` is written as `ExternalAuth__InternalSecret` in the root `.env` and into
   `external-auth-service/.env`; `BFF_SESSION_SECRET` and `INTERNAL_API_SECRET` are mirrored into
   `frontend/.env.local`. `SEED_PI_API_KEY_SYS_00N` always equals the backend's key for that system so

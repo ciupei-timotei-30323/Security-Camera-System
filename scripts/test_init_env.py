@@ -414,6 +414,37 @@ def test_lan_host_is_reused_from_existing_pi_env(repo: Path) -> None:
     assert init_env.find_define(header, "MQTT_HOST") == "192.168.5.9"
 
 
+def test_lan_host_flag_corrects_a_stale_pi_env(repo: Path) -> None:
+    """The wrong address case: re-running with --lan-host must fix RTSP_HOST, not keep it."""
+    provision(repo, ["sys-001"], lan_host="192.168.1.10")
+    pi_env = repo / "dist/devices/sys-001/pi.env"
+    header_path = repo / "dist/devices/sys-001/config.h"
+    assert EnvFile(pi_env).get("RTSP_HOST") == "192.168.1.10"
+
+    provision(repo, ["sys-001"], lan_host="192.168.0.42")
+
+    assert EnvFile(pi_env).get("RTSP_HOST") == "192.168.0.42"
+    assert init_env.find_define(header_path.read_text(encoding="utf-8"), "MQTT_HOST") == (
+        "192.168.0.42"
+    )
+
+
+def test_without_lan_host_flag_an_existing_value_is_kept(repo: Path) -> None:
+    provision(repo, ["sys-001"], lan_host="192.168.0.42")
+    pi_env = repo / "dist/devices/sys-001/pi.env"
+    pi_env.write_text(
+        pi_env.read_text(encoding="utf-8").replace(
+            "RTSP_HOST=192.168.0.42", "RTSP_HOST=10.9.9.9"
+        ),
+        encoding="utf-8",
+    )
+
+    # No --lan-host: hand edits are the operator's and must survive.
+    provision(repo, ["sys-001"], lan_host=None)
+
+    assert EnvFile(pi_env).get("RTSP_HOST") == "10.9.9.9"
+
+
 def test_parse_systems_trims_and_deduplicates() -> None:
     assert init_env.parse_systems(" sys-001 , sys-002 ,sys-001") == ["sys-001", "sys-002"]
 

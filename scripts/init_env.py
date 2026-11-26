@@ -540,6 +540,9 @@ class Provisioner:
         self.legacy_frontend_env = EnvFile(legacy_frontend) if legacy_frontend.exists() else None
 
         self._lan_cache: str | None = None
+        # True when the operator supplied the address (--lan-host or a prompt answer), so the
+        # value must win over whatever an older pi.env already contains.
+        self._lan_explicit = False
         self._wifi_cache: tuple[str, str] | None = None
 
     # -- io ----------------------------------------------------------------------------------
@@ -1044,6 +1047,7 @@ class Provisioner:
             return self._lan_cache
         if self.o.lan_host:
             self._lan_cache = self.o.lan_host
+            self._lan_explicit = True
             return self._lan_cache
 
         # Reuse whatever the operator already set for RTSP ingest or the ESP32 broker. Values are
@@ -1069,10 +1073,13 @@ class Provisioner:
                 self._lan_cache = candidate
                 return candidate
 
-        self._lan_cache = self.ask(
+        answer = self.ask(
             "LAN address of this machine (Pi RTSP ingest + ESP32 MQTT broker)",
             DEFAULT_LAN_HOST,
-        ) or DEFAULT_LAN_HOST
+        )
+        self._lan_cache = answer or DEFAULT_LAN_HOST
+        # An answer that differs from what the file already holds is a correction, not a default.
+        self._lan_explicit = bool(answer) and answer != DEFAULT_LAN_HOST
         return self._lan_cache
 
     def wifi(self) -> tuple[str, str]:
@@ -1135,7 +1142,7 @@ class Provisioner:
         env.set("STREAM_MODE", self.plain(env, "STREAM_MODE", "webrtc"))
         env.set(
             "RTSP_HOST",
-            self.plain(env, "RTSP_HOST", lan_host),
+            lan_host if self._lan_explicit else self.plain(env, "RTSP_HOST", lan_host),
             section=(
                 "# --- MediaMTX RTSP ingest (host port 8554 in compose.yaml) --------------------\n"
                 "# The streamer builds\n"
